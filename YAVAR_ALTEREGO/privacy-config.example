@@ -1,0 +1,33 @@
+# Privacy Configuration Template
+# Copy this file to privacy-config.py and fill in your actual values
+
+# Personal Information (Keep Private)
+PERSONAL_DATA = {
+    "name": "Your Name Here",
+    "email": "your.email@example.com",
+    "phone": "+1 (XXX) XXX-XXXX",
+    "address": "Your Address Here",
+    "emergency_contact": {
+        "name": "Emergency Contact Name",
+        "phone": "+1 (XXX) XXX-XXXX",
+        "email": "emergency@example.com"
+    }
+}
+
+# Professional Information (Can be Public)
+PROFESSIONAL_DATA = {
+    "title": "AI/ML Engineer",
+    "company": "Your Company",
+    "location": "City, State",
+    "availability": "Available for opportunities",
+    "work_authorization": "Authorized to work in US"
+}
+
+# Privacy Settings
+PRIVACY_SETTINGS = {
+    "enable_personal_data": False,
+    "enable_contact_info": False,
+    "enable_emergency_contact": False,
+    "enable_address": False,
+    "enable_phone": False
+}

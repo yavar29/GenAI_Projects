@@ -48,6 +48,27 @@ AI_ALTEREGO/
 
 The knowledge base (`kb/`) contains organized information that can be customized for any professional profile:
 
+### Template Setup
+
+This project includes template files to help you get started quickly:
+
+1. **Run the setup script**:
+   ```bash
+   ./setup_template.sh
+   ```
+
+2. **Customize template files**:
+   - Files ending with `-template.md` contain placeholder content
+   - Replace all placeholder text with your actual information
+   - Remove the `-template` suffix after customization
+
+3. **Template files include**:
+   - Career goals and aspirations
+   - Technical skills and experience
+   - Project highlights and portfolio
+   - Contact information
+   - Personal summary
+
 ### FAQ Categories
 - **Career Goals**: Professional aspirations and objectives
 - **Availability**: Work schedule preferences and start dates
@@ -91,8 +112,10 @@ The knowledge base (`kb/`) contains organized information that can be customized
    ```
 
 4. **Customize the knowledge base**
-   - Replace content in `kb/` directory with your own information
+   - Run `./setup_template.sh` to create template files
+   - Replace template content in `kb/` directory with your own information
    - Update `me/` folder with your personal profile data
+   - Remove `-template` suffix from customized files
    - Modify system prompts in `app/core/prompts.py` if needed
 
 5. **Run the application**

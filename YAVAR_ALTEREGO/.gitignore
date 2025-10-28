@@ -158,7 +158,7 @@ cython_debug/
 
 # PRIVACY PROTECTION - PERSONAL DATA
 # Personal information files
-me/
+# me/  # Allow me/ folder but exclude specific files below
 *.pdf
 *.docx
 *.doc
@@ -179,7 +179,6 @@ me/
 **/about.txt
 
 # Sensitive project files with personal info
-**/projects/*/README.md
 **/projects/*/readme.md
 
 # Environment and secrets

@@ -163,6 +163,10 @@ cython_debug/
 *.docx
 *.doc
 
+# Allow tracking a visible placeholder and summary inside me/
+!me/.gitkeep
+!me/summary.txt
+
 # Contact information and personal details
 **/contact-information.md
 **/personal-details.md

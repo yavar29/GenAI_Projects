@@ -209,3 +209,14 @@ logs/
 # Backup files
 *.bak
 *.backup
+
+# Personal Development - Local Only
+# These files are for local development and won't be committed
+kb/faq/01-career-goals.md
+kb/faq/05-technical-skills.md
+kb/faq/06-projects-highlight.md
+kb/faq/10-contact-information.md
+me/summary.txt
+
+# Backup directory - contains personal data
+backup/

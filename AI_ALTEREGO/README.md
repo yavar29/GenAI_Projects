@@ -1,4 +1,4 @@
-# 🤖 AI Alter Ego - Intelligent Personal Assistant
+# AI Alter Ego - Intelligent Personal Assistant
 
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces)
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://python.org)
@@ -7,29 +7,15 @@
 
 > **An intelligent AI assistant that embodies a professional persona, capable of answering questions about background, skills, projects, and career aspirations with smart reasoning and contextual understanding.**
 
-## 🌟 Features
+## Features
 
-### 🧠 **Intelligent Knowledge Retrieval**
-- **Semantic Search**: Advanced RAG (Retrieval-Augmented Generation) with multiple query variations
-- **Smart Reasoning**: Common sense connections between related concepts
-- **Context Awareness**: Understands nuanced questions and provides relevant answers
- - **FAISS Persistent Memory (New)**: Fast, persistent vector store for 10x faster similarity search and instant startup
+- Retrieval (RAG): Finds relevant context from your notes (markdown, PDFs) to answer questions.
+- Reasoning and tools: Uses function calling to log unknown questions and capture user details when needed.
+- Persona switching: Adjusts tone and style (Professional, Mentor, Casual, Technical).
+- Vector store (FAISS): Speeds up semantic search and persists to disk.
+- Notifications (Pushover): Sends optional alerts for new interactions or unknown questions.
 
-### 💼 **Professional Persona**
-- **Comprehensive Knowledge Base**: Covers career goals, technical skills, projects, and experience
-- **Behavioral Interview Responses**: Ready-to-use answers for leadership, challenges, and teamwork questions
-- **Contact Information**: Complete professional details and availability
-- **Work Authorization**: Clear work status and timeline information
-
-### 🚀 **Advanced Capabilities**
-- **Logical Reasoning**: Connects related concepts intelligently
-- **Project Portfolio**: Detailed information about ML/AI projects and research
-- **Availability Management**: Smart responses about work preferences and schedule flexibility
-- **Emergency Contacts**: Complete personal and professional contact information
-- **Pushover Notifications**: Real-time alerts when users express interest in connecting or ask questions you haven't answered
- - **Persona Switching**: Toggle between Professional, Mentor, Casual, and Technical personas at runtime
-
-## 🏗️ Architecture
+## Architecture
 
 ```
 AI-Alter-Ego/
@@ -48,7 +34,7 @@ AI-Alter-Ego/
 └── me/              # Personal profile data (linkedIn profile and summary.txt)
 ```
 
-## 📊 Knowledge Base Structure
+## Knowledge Base Structure
 
 The knowledge base (`kb/`) is the heart of your AI assistant. It contains all the information your AI will use to answer questions. You can organize it however you like - here's the flexible structure:
 
@@ -94,61 +80,21 @@ kb/
 └── README.md              # Knowledge base documentation
 ```
 
-### 🎯 **Knowledge Base Categories**
+### Knowledge Base Categories
 
-#### **FAQ Directory (`kb/faq/`)**
-Contains structured Q&A content that your AI will use to answer common questions:
+- `kb/faq/`: Common questions and answers about background, skills, projects, and experience.
+- `kb/faq/recruiters/`: Behavioral and recruiter-focused questions.
+- `kb/projects/`: Project folders, each with its own `README.md` and assets.
+- `kb/portfolio/`: Images, documents, and presentations.
+- `kb/resume/`: Resume and professional documents.
 
-- **`01-career-goals.md`** - Your professional aspirations and objectives
-- **`02-availability.md`** - Work schedule preferences and start dates  
-- **`03-work-authorization.md`** - Work status and visa requirements
-- **`04-relocation-preference.md`** - Geographic preferences and flexibility
-- **`05-technical-skills.md`** - Programming languages, frameworks, tools
-- **`06-projects-highlight.md`** - Key project descriptions and achievements
-- **`07-education-background.md`** - Academic qualifications and certifications
-- **`08-professional-experience.md`** - Work history and experience
-- **`09-research-interests.md`** - Research areas and academic interests
-- **`10-contact-information.md`** - Professional contact details and preferences
+Add a new project:
+```bash
+mkdir -p kb/projects/my-project
+echo "# My Project" > kb/projects/my-project/README.md
+```
 
-#### **Recruiter Directory (`kb/faq/recruiters/`)**
-Specialized responses for behavioral interview questions:
-
-- **Salary expectations** - Compensation discussions
-- **Preferred tech stack** - Technology preferences
-- **Future goals** - Long-term career planning
-- **Team culture** - Work environment preferences
-- **Project ownership** - Leadership and responsibility examples
-- **Leadership style** - Management approach
-- **Problem solving** - Analytical thinking examples
-- **Handling pressure** - Stress management
-- **Learning philosophy** - Continuous learning approach
-- **Communication & collaboration** - Teamwork examples
-
-#### **Projects Directory (`kb/projects/`)**
-Detailed documentation for your projects:
-
-- **Individual project folders** - Each project gets its own directory
-- **README.md files** - Detailed project descriptions, technologies used, achievements
-- **Code snippets** - Key implementation details
-- **Results and metrics** - Performance data, impact, outcomes
-
-#### **Portfolio Directory (`kb/portfolio/`)**
-Additional materials to showcase your work:
-
-- **Images** - Screenshots, diagrams, visualizations
-- **Documents** - Case studies, reports, presentations
-- **Presentations** - Slide decks, demos
-- **Certificates** - Awards, certifications, achievements
-
-#### **Resume Directory (`kb/resume/`)**
-Professional documents and profiles:
-
-- **Resume PDF** - Your main resume document
-- **LinkedIn PDF** - LinkedIn profile export
-- **CV PDF** - Academic curriculum vitae
-- **Cover letters** - Template cover letters
-
-### 🔧 **Customization Options**
+### Customization Options
 
 The knowledge base template can be changed based on your needs:
 
@@ -158,7 +104,7 @@ The knowledge base template can be changed based on your needs:
 4. **Add multimedia** - Include images, documents, presentations
 5. **Create custom categories** - Add industry-specific or personal sections
 
-### 📝 **File Format Guidelines**
+### File Format Guidelines
 
 - **Markdown files** (`.md`) - Preferred format for text content
 - **PDF files** (`.pdf`) - For documents, resumes, certificates
@@ -167,7 +113,7 @@ The knowledge base template can be changed based on your needs:
 - **JSON files** (`.json`) - For structured data
 
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -222,7 +168,7 @@ This will create:
 
 > **💡 Important**: The knowledge base template is flexible - you can modify, add, or remove any sections based on your specific needs.
 
-### 🎨 Customization
+### Customization
 
 #### Step 5: Customize Your Knowledge Base
 
@@ -267,7 +213,7 @@ This will create:
 nano app/core/prompts.py
 ```
 
-### 🚀 Running the Application
+### Running the Application
 
 #### Step 7: Start Your AI Assistant
 ```bash
@@ -278,7 +224,7 @@ uv run python main.py
 - Open your browser to `http://localhost:7861`
 - Start chatting with your AI alter ego!
 
-### 🧪 Testing Your Setup
+### Testing Your Setup
 
 Try asking these questions to test your setup:
 
@@ -288,7 +234,7 @@ Try asking these questions to test your setup:
 - "What's your availability for work?"
 - "Tell me about your education background"
 
-### 🔧 Troubleshooting
+### Troubleshooting
 
 **Common Issues:**
 
@@ -309,7 +255,7 @@ Try asking these questions to test your setup:
    - Make sure you ran `./setup_template.sh`
    - Check that files exist in `kb/faq/` and `me/` folders
 
-### 📚 Next Steps
+### Next Steps
 
 Once your basic setup is working:
 
@@ -317,13 +263,13 @@ Once your basic setup is working:
 2. **Test Questions** - Ask questions to make sure your AI responds correctly
 3. **Deploy Online** - Use Hugging Face Spaces for public access
 
-### 🎯 Simple Tips
+### Simple Tips
 
 - **Start with basic information** - Add your career goals, skills, and projects first
 - **Test as you go** - Ask questions to check if your AI responds correctly
 - **Keep it simple** - Don't overcomplicate the setup
 
-## 🌐 Hugging Face Spaces Deployment
+## Hugging Face Spaces Deployment
 
 This project is designed for seamless deployment on Hugging Face Spaces with Gradio:
 
@@ -339,7 +285,7 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
    # README.md in your Space
    ---
    title: AI Alter Ego
-   emoji: 🤖
+    # emoji removed for this README
    colorFrom: blue
    colorTo: purple
    sdk: gradio
@@ -357,7 +303,7 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
    - Push your code to the Space repository
    - The Space will automatically build and deploy
 
-## 🛠️ Technical Stack
+## Technical Stack
 
 - **Backend**: Python 3.12, FastAPI
 - **AI/ML**: OpenAI GPT-4, LangChain, RAG
@@ -366,7 +312,7 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
 - **Document Processing**: PyPDF, text chunking
 - **Deployment**: Hugging Face Spaces, Docker
 
-## 🔔 Pushover Notifications
+## Pushover Notifications
 
 The AI Alter Ego includes optional **Pushover notification integration** to keep you informed about important interactions:
 
@@ -392,7 +338,7 @@ The AI Alter Ego includes optional **Pushover notification integration** to keep
 - *"What's your favorite programming language?"* → You get notified about this unknown question
 - *"Can you help me with my ML project?"* → You get notified about collaboration interest
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 ```bash
@@ -416,12 +362,12 @@ GRADIO_SERVER_PORT=7861
 - Update `kb/` directory for knowledge base content
 - Adjust `app/config/settings.py` for performance tuning
 
-## 🆕 What's New
+## What's New
 
 - FAISS-based persistent vector store with automatic save/load and significantly faster semantic search
 - Persona switching in the UI with four presets (Professional, Mentor, Casual, Technical) and configurable templates
 
-## 🚀 Future Roadmap
+## Future Roadmap
 
 ### Key Features to Implement
 - **Multi-Modal RAG**: Support for images, documents, and multimedia content
@@ -431,7 +377,7 @@ GRADIO_SERVER_PORT=7861
 - **Enhanced Security**: End-to-end encryption and privacy controls
 - **Analytics Dashboard**: Usage tracking and performance metrics
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -439,7 +385,7 @@ GRADIO_SERVER_PORT=7861
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📝 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
@@ -449,4 +395,4 @@ If you find this project helpful, please give it a ⭐ on GitHub!
 
 ---
 
-**Ready to create your own AI-powered personal assistant? Deploy now and start chatting with your intelligent alter ego!** 🚀
+**Ready to create your own AI-powered personal assistant? Deploy now and start chatting with your intelligent alter ego!**

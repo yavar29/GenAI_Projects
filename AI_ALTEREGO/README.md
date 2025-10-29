@@ -13,6 +13,7 @@
 - **Semantic Search**: Advanced RAG (Retrieval-Augmented Generation) with multiple query variations
 - **Smart Reasoning**: Common sense connections between related concepts
 - **Context Awareness**: Understands nuanced questions and provides relevant answers
+ - **FAISS Persistent Memory (New)**: Fast, persistent vector store for 10x faster similarity search and instant startup
 
 ### 💼 **Professional Persona**
 - **Comprehensive Knowledge Base**: Covers career goals, technical skills, projects, and experience
@@ -26,6 +27,7 @@
 - **Availability Management**: Smart responses about work preferences and schedule flexibility
 - **Emergency Contacts**: Complete personal and professional contact information
 - **Pushover Notifications**: Real-time alerts when users express interest in connecting or ask questions you haven't answered
+ - **Persona Switching**: Toggle between Professional, Mentor, Casual, and Technical personas at runtime
 
 ## 🏗️ Architecture
 
@@ -34,7 +36,7 @@ AI-Alter-Ego/
 ├── app/
 │   ├── agents/          # AI Assistant core
 │   ├── config/          # Configuration settings
-│   ├── core/            # System prompts and routing
+│   ├── core/            # System prompts, personas, and routing
 │   ├── rag/             # Retrieval-Augmented Generation
 │   ├── server/          # Gradio UI server
 │   └── tools/           # Knowledge base search tools
@@ -42,6 +44,7 @@ AI-Alter-Ego/
 │   ├── faq/            # Frequently Asked Questions
 │   ├── projects/       # Project documentation
 │   └── resume/         # Resume and professional data
+├── vector_store/        # FAISS index + chunks (auto-created, persisted)
 └── me/              # Personal profile data (linkedIn profile and summary.txt)
 ```
 
@@ -272,7 +275,7 @@ uv run python main.py
 ```
 
 #### Step 8: Access the Interface
-- Open your browser to `http://localhost:7860`
+- Open your browser to `http://localhost:7861`
 - Start chatting with your AI alter ego!
 
 ### 🧪 Testing Your Setup
@@ -359,7 +362,7 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
 - **Backend**: Python 3.12, FastAPI
 - **AI/ML**: OpenAI GPT-4, LangChain, RAG
 - **Frontend**: Gradio 5.22+
-- **Vector Database**: NumPy-based similarity search
+- **Vector Database**: FAISS (persistent vector store) + OpenAI embeddings
 - **Document Processing**: PyPDF, text chunking
 - **Deployment**: Hugging Face Spaces, Docker
 
@@ -402,12 +405,21 @@ CHUNK_OVERLAP=300
 # Optional: Pushover Notifications
 PUSHOVER_TOKEN=your_pushover_token
 PUSHOVER_USER=your_pushover_user
+
+# Optional: UI server
+GRADIO_SERVER_PORT=7861
 ```
 
 ### Customization
 - Modify `app/core/prompts.py` for system behavior
+- Use `app/core/personas.py` or `persona_config.json` to customize/add personas
 - Update `kb/` directory for knowledge base content
 - Adjust `app/config/settings.py` for performance tuning
+
+## 🆕 What's New
+
+- FAISS-based persistent vector store with automatic save/load and significantly faster semantic search
+- Persona switching in the UI with four presets (Professional, Mentor, Casual, Technical) and configurable templates
 
 ## 🚀 Future Roadmap
 

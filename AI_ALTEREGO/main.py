@@ -24,6 +24,14 @@ def simple_token_chunks(text: str, max_chars: int = 1800, overlap: int = 300):
 
 def build_kb_store() -> VectorStore:
     store = VectorStore()
+    
+    # Check if we already have a populated store
+    if len(store.chunks) > 0:
+        print(f"[FAISS] Using existing vector store with {len(store.chunks)} chunks")
+        return store
+    
+    # Build new store from knowledge base files
+    print("[FAISS] Building new vector store from knowledge base...")
     for path in iter_kb_files(KB_DIR):
         raw = load_text_from_file(path)
         if not raw:
@@ -33,6 +41,8 @@ def build_kb_store() -> VectorStore:
         vecs = embed_texts(parts)
         chunks = [Chunk(id=str(uuid.uuid4()), text=t, meta=m) for t, m in zip(parts, metas)]
         store.add(vecs, chunks)
+    
+    print(f"[FAISS] Built vector store with {len(store.chunks)} chunks")
     return store
 
 def load_me():
@@ -50,7 +60,8 @@ def load_me():
 if __name__ == "__main__":
     # 1) Build KB index
     store = build_kb_store()
-    print(f"[KB] docs={len(store.chunks)} chunks indexed", flush=True)
+    stats = store.get_stats()
+    print(f"[FAISS] Vector store ready: {stats['chunk_count']} chunks, dimension {stats['dimension']}", flush=True)
     kb_search.KB_STORE = store  # expose to tool
 
     # 2) Load profile materials
@@ -58,4 +69,4 @@ if __name__ == "__main__":
 
     # 3) Spin assistant + UI
     assistant = Assistant(name=name, summary_text=summary_text, linkedin_text=linkedin_text, model=OPENAI_MODEL)
-    launch_ui(assistant.chat)
+    launch_ui(assistant.chat, assistant_instance=assistant)

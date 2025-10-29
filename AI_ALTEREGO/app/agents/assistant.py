@@ -1,19 +1,39 @@
 import json
 from openai import OpenAI
 from app.core.prompts import build_system_prompt
+from app.core.personas import persona_manager
 from app.tools import record_user_details, record_unknown_question, kb_search
 
 class Assistant:
-    def __init__(self, name: str, summary_text: str, linkedin_text: str, model: str):
+    def __init__(self, name: str, summary_text: str, linkedin_text: str, model: str, persona: str = "professional"):
         self.client = OpenAI()
         self.name = name
         self.model = model
-        self.system_prompt = build_system_prompt(name, summary_text, linkedin_text)
+        self.summary_text = summary_text
+        self.linkedin_text = linkedin_text
+        self.current_persona = persona
+        self.system_prompt = self._build_system_prompt(persona)
         self.tools = [
             {"type": "function", "function": record_user_details.schema},
             {"type": "function", "function": record_unknown_question.schema},
             {"type": "function", "function": kb_search.schema},
         ]
+    
+    def _build_system_prompt(self, persona: str) -> str:
+        """Build system prompt for the specified persona"""
+        return persona_manager.build_system_prompt(
+            persona, self.name, self.summary_text, self.linkedin_text
+        )
+    
+    def switch_persona(self, persona: str):
+        """Switch to a different persona"""
+        self.current_persona = persona
+        self.system_prompt = self._build_system_prompt(persona)
+        print(f"[Assistant] Switched to {persona} persona")
+    
+    def get_current_persona_info(self):
+        """Get information about the current persona"""
+        return persona_manager.get_persona(self.current_persona)
 
     def _handle_tool_calls(self, tool_calls):
         msgs = []

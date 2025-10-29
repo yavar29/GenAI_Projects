@@ -25,6 +25,7 @@
 - **Project Portfolio**: Detailed information about ML/AI projects and research
 - **Availability Management**: Smart responses about work preferences and schedule flexibility
 - **Emergency Contacts**: Complete personal and professional contact information
+- **Pushover Notifications**: Real-time alerts when users express interest in connecting or ask questions you haven't answered
 
 ## 🏗️ Architecture
 
@@ -362,6 +363,32 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
 - **Document Processing**: PyPDF, text chunking
 - **Deployment**: Hugging Face Spaces, Docker
 
+## 🔔 Pushover Notifications
+
+The AI Alter Ego includes optional **Pushover notification integration** to keep you informed about important interactions:
+
+### **When Notifications Are Sent:**
+- **Connection Requests**: When users express interest in connecting or collaborating
+- **Unknown Questions**: When someone asks questions not covered in your knowledge base
+- **User Details**: When users provide their contact information for follow-up
+
+### **Setup Pushover Notifications:**
+1. **Create Pushover Account**: Sign up at [pushover.net](https://pushover.net)
+2. **Get API Credentials**: 
+   - Application Token (from your app)
+   - User Key (from your account)
+3. **Add to Environment Variables**:
+   ```bash
+   PUSHOVER_TOKEN=your_application_token
+   PUSHOVER_USER=your_user_key
+   ```
+4. **Install Pushover App**: Download on your phone/desktop for instant notifications
+
+### **Example Notification Scenarios:**
+- *"I'd love to connect and discuss potential opportunities"* → You get notified with user's email
+- *"What's your favorite programming language?"* → You get notified about this unknown question
+- *"Can you help me with my ML project?"* → You get notified about collaboration interest
+
 ## 🔧 Configuration
 
 ### Environment Variables
@@ -371,6 +398,10 @@ OPENAI_MODEL=gpt-4
 KB_DIR=./kb
 CHUNK_TOKENS=1800
 CHUNK_OVERLAP=300
+
+# Optional: Pushover Notifications
+PUSHOVER_TOKEN=your_pushover_token
+PUSHOVER_USER=your_pushover_user
 ```
 
 ### Customization

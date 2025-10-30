@@ -14,6 +14,8 @@
 - Persona switching: Adjusts tone and style (Professional, Mentor, Casual, Technical).
 - Vector store (FAISS): Speeds up semantic search and persists to disk.
 - Notifications (Pushover): Sends optional alerts for new interactions or unknown questions.
+- Flexible GUI (Gradio): tweak layout and styling as needed.
+- Identity-aware answers with strict grounding and anti‑hallucination policies.
 
 ## Architecture
 
@@ -219,6 +221,10 @@ nano app/core/prompts.py
 ```bash
 uv run python main.py
 ```
+
+### GUI Customization
+
+All UI customizations live in `app/server/ui_gradio.py` (custom CSS inside the `gr.Blocks(css="""...""")` block).
 
 #### Step 8: Access the Interface
 - Open your browser to `http://localhost:7861`

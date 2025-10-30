@@ -28,20 +28,6 @@ Both experiences reinforced my belief that **consistency, structure, and mentors
 
 ---
 
-## Q: Tell me about your projects other than what's mentioned in your resume.
-
-### A:
-Beyond the projects listed on my resume, I've worked on several self-driven and research-oriented initiatives that helped me expand my technical depth and creativity:
-
-- **AI Code Reviewer** – Built a lightweight LLM-based reviewer that analyzes pull requests and generates contextual feedback using OpenAI + LangChain APIs.  
-- **Reinforcement Learning Grid Navigation System** – Designed a Q-learning agent for path optimization and adaptive exploration in dynamic environments.  
-- **ThermoWatch Autoencoder** – Developed a convolutional autoencoder to detect anomalies in sensor data using reconstruction error analysis.  
-- **Emotion Recognition from Audio** – Converted audio files into spectrograms and trained CNNs to classify emotions. Improved balance through data augmentation and oversampling.  
-
-These projects were not coursework — they were born from curiosity. Each taught me something new about experimentation, pipeline optimization, and taking research ideas to working prototypes.
-
----
-
 ## Q: How did you manage the team of six at Accenture?
 
 ### A:
@@ -62,6 +48,17 @@ The result:
 - I was awarded **Best Employee of the Quarter** for leading the team through this phase with zero missed releases.  
 
 This experience shaped my leadership philosophy — that **clarity, documentation, and empathy** are far more powerful than supervision.  
+
+---
+
+## Q: Tell me about your projects other than what's mentioned in your resume.
+
+### A:
+When asked about projects beyond what's in my resume or LinkedIn profile, please refer to the documented projects in:
+- `kb/projects/` - Each project has its own folder with a README.md containing detailed information
+- `kb/faq/06-projects-highlight.md` - Choices for project highlights and summaries
+
+Only list projects that have dedicated documentation in `kb/projects/*/README.md` with proper citations. Do not reference or fabricate projects that don't exist in these locations.
 
 ---
 

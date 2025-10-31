@@ -35,6 +35,30 @@ class Assistant:
         """Get information about the current persona"""
         return persona_manager.get_persona(self.current_persona)
 
+    def _build_kb_context_message(self, query: str, max_items: int = 6):
+        """Run a KB search up-front and return a system message with compact snippets.
+        This guarantees the model always receives grounded context from kb/ before answering.
+        """
+        try:
+            res = kb_search.kb_search(query=query, top_k=max_items)
+            matches = res.get("matches", []) if isinstance(res, dict) else []
+        except Exception:
+            matches = []
+
+        if not matches:
+            return {"role": "system", "content": "KB_CONTEXT: No matches found."}
+
+        lines = ["KB_CONTEXT (top matches):"]
+        for i, m in enumerate(matches, 1):
+            src = (m.get("source") or "?")
+            score = m.get("score", 0)
+            text = (m.get("text") or "").replace("\n", " ").strip()
+            if len(text) > 450:
+                text = text[:450] + "…"
+            lines.append(f"[{i}] score={score} source={src}\n{text}")
+
+        return {"role": "system", "content": "\n".join(lines)}
+
     def _handle_tool_calls(self, tool_calls):
         msgs = []
         for tc in tool_calls:
@@ -52,7 +76,12 @@ class Assistant:
         return msgs
 
     def chat(self, message: str, history: list[dict]):
-        messages = [{"role": "system", "content": self.system_prompt}] + history + [{"role": "user", "content": message}]
+        # Always inject KB context before answering to ensure grounding
+        kb_context_msg = self._build_kb_context_message(message, max_items=8)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            kb_context_msg,
+        ] + history + [{"role": "user", "content": message}]
         
         # Enhanced search strategy - try multiple approaches
         search_attempts = 0

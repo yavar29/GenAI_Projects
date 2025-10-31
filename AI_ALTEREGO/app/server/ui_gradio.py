@@ -6,8 +6,8 @@ import os
 # Examples:
 # PHOTO_URL = "https://example.com/path/to/your/photo.jpg"  # For URL
 # PHOTO_URL = "me/photo.jpg"  # For local file in project directory
-PHOTO_URL = "me/personal_photo.jpg"  # Photo for header and chatbot avatar (or None to hide)
-SIDEBAR_PHOTO_URL = "me/personal_photo2.png"  # Photo for sidebar (or None to hide, uses PHOTO_URL if not set)
+PHOTO_URL = "me/personal_photo2.png"  # Photo for header and chatbot avatar (or None to hide)
+SIDEBAR_PHOTO_URL = "me/image.png"  # Photo for sidebar (or None to hide, uses PHOTO_URL if not set)
 
 def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
     """Create a Gradio interface with persona switching"""
@@ -410,16 +410,16 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
                 # Example questions
                 with gr.Group():
                     gr.Markdown("### 💡 Example Questions")
-                    example_q1 = gr.Button("What are your career goals?", size="sm", variant="secondary")
-                    example_q2 = gr.Button("Tell me about your projects", size="sm", variant="secondary")
+                    example_q1 = gr.Button("Introduce yourself in 3 lines", size="sm", variant="secondary")
+                    example_q2 = gr.Button("Tell me about your projects other than the ones in LinkedIn/resume", size="sm", variant="secondary")
                     example_q3 = gr.Button("What's your tech stack?", size="sm", variant="secondary")
-                    example_q4 = gr.Button("How are you implemented?", size="sm", variant="secondary")
+                    example_q4 = gr.Button("How is the chatbot implemented?", size="sm", variant="secondary")
                 
             with gr.Column(scale=3, elem_classes=["chat-column"]):
                 # Chat interface
                 chatbot = gr.Chatbot(
                     height=400,
-                    label="💬 Chat with my AI Companion",
+                    label="💬 Chat with Yavar's AI Companion",
                     show_label=True,
                     type="messages",
                     avatar_images=(None, avatar_image),  # Use user's photo as bot avatar
@@ -452,10 +452,10 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
         def fill_example(question):
             return question
         
-        example_q1.click(fn=lambda: "What are your career goals?", outputs=msg)
-        example_q2.click(fn=lambda: "Tell me about your projects", outputs=msg)
-        example_q3.click(fn=lambda: "What's your technical stack?", outputs=msg)
-        example_q4.click(fn=lambda: "How are you implemented?", outputs=msg)
+        example_q1.click(fn=lambda: "Introduce yourself in 3 lines", outputs=msg)
+        example_q2.click(fn=lambda: "Tell me about your projects other than the ones in LinkedIn/resume", outputs=msg)
+        example_q3.click(fn=lambda: "What's your tech stack?", outputs=msg)
+        example_q4.click(fn=lambda: "How is the chatbot implemented?", outputs=msg)
         
         # Event handlers
         def user_message(message, history, persona):

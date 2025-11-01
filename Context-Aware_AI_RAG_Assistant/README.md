@@ -1,6 +1,6 @@
 ---
 title: Career_Conversation
-app_file: app.py
+app_file: main.py
 sdk: gradio
 sdk_version: 5.34.2
 ---

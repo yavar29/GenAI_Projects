@@ -358,6 +358,25 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
             margin-top: 0;
         }
         
+        .features-section .stat-card {
+            background: rgba(225, 216, 238, 0.95) !important;
+            border: 1px solid rgba(255, 255, 255, 0.5) !important;
+            color: #1f2937 !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15) !important;
+        }
+        
+        .features-section .stat-card h4 {
+            color: #111827 !important;
+        }
+        
+        .features-section .stat-card p.tag {
+            color: #4b5563 !important;
+        }
+        
+        .features-section .stat-card p {
+            color: #374151 !important;
+        }
+        
         /* Mega hero (two-column) */
         .mega-hero {
             background: radial-gradient(1200px 600px at 10% 10%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.02) 40%),

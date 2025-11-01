@@ -1,4 +1,4 @@
-# AI Alter Ego - Intelligent Personal Assistant
+# Context-Aware AI RAG Assistant
 
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces)
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://python.org)
@@ -228,7 +228,7 @@ All UI customizations live in `app/server/ui_gradio.py` (custom CSS inside the `
 
 #### Step 8: Access the Interface
 - Open your browser to `http://localhost:7861`
-- Start chatting with your AI alter ego!
+- Start chatting with your Context-Aware AI RAG Assistant!
 
 ### Testing Your Setup
 
@@ -290,7 +290,7 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
    ```yaml
    # README.md in your Space
    ---
-   title: AI Alter Ego
+   title: Context-Aware AI RAG Assistant
     # emoji removed for this README
    colorFrom: blue
    colorTo: purple
@@ -315,12 +315,12 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
 - **AI/ML**: OpenAI GPT-4, LangChain, RAG
 - **Frontend**: Gradio 5.22+
 - **Vector Database**: FAISS (persistent vector store) + OpenAI embeddings
-- **Document Processing**: PyPDF, text chunking
+- **Document Processing**: LangChain loaders (PyPDFLoader, TextLoader) + RecursiveCharacterTextSplitter
 - **Deployment**: Hugging Face Spaces, Docker
 
 ## Pushover Notifications
 
-The AI Alter Ego includes optional **Pushover notification integration** to keep you informed about important interactions:
+The Context-Aware AI RAG Assistant includes optional **Pushover notification integration** to keep you informed about important interactions:
 
 ### **When Notifications Are Sent:**
 - **Connection Requests**: When users express interest in connecting or collaborating
@@ -351,8 +351,8 @@ The AI Alter Ego includes optional **Pushover notification integration** to keep
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_MODEL=gpt-4
 KB_DIR=./kb
-CHUNK_TOKENS=1800
-CHUNK_OVERLAP=300
+CHUNK_MAX_CHARS=1800
+CHUNK_OVERLAP_CHARS=300
 
 # Optional: Pushover Notifications
 PUSHOVER_TOKEN=your_pushover_token
@@ -405,4 +405,4 @@ If you find this project helpful, please give it a ⭐ on GitHub!
 
 ---
 
-**Ready to create your own AI-powered personal assistant? Deploy now and start chatting with your intelligent alter ego!**
+**Ready to create your own AI-powered personal assistant? Deploy now and start chatting with your Context-Aware AI RAG Assistant!**

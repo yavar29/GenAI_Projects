@@ -2,24 +2,25 @@ import os, uuid
 from pathlib import Path
 import numpy as np
 
-from app.config.settings import OPENAI_MODEL, KB_DIR, CHUNK_TOKENS, CHUNK_OVERLAP
+from app.config.settings import OPENAI_MODEL, KB_DIR, CHUNK_MAX_CHARS, CHUNK_OVERLAP_CHARS
 from app.rag.loader import load_text_from_file, iter_kb_files
 from app.rag.embedder import embed_texts
 from app.rag.store import VectorStore, Chunk
 from app.tools import kb_search
 from app.agents.assistant import Assistant
 from app.server.ui_gradio import launch_ui
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
-def simple_token_chunks(text: str, max_chars: int = 1800, overlap: int = 300):
-    # character-based splitter (simple & robust). You can swap for token-based later.
-    chunks = []
-    i = 0
-    n = len(text)
-    while i < n:
-        j = min(i + max_chars, n)
-        chunks.append(text[i:j])
-        i = j - overlap if j - overlap > i else j
+def chunk_text(text: str, chunk_size: int = 1800, chunk_overlap: int = 300) -> list[str]:
+    """Chunk text using LangChain's RecursiveCharacterTextSplitter for better boundary handling"""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", " ", ""]  # Try paragraph, line, sentence, word boundaries
+    )
+    chunks = splitter.split_text(text)
     return [c.strip() for c in chunks if c.strip()]
 
 def build_kb_store() -> VectorStore:
@@ -36,7 +37,8 @@ def build_kb_store() -> VectorStore:
         raw = load_text_from_file(path)
         if not raw:
             continue
-        parts = simple_token_chunks(raw)
+        # Use LangChain's RecursiveCharacterTextSplitter for better chunking
+        parts = chunk_text(raw, chunk_size=CHUNK_MAX_CHARS, chunk_overlap=CHUNK_OVERLAP_CHARS)
         metas = [{"source": str(path), "section": None, "updated": None} for _ in parts]
         vecs = embed_texts(parts)
         chunks = [Chunk(id=str(uuid.uuid4()), text=t, meta=m) for t, m in zip(parts, metas)]

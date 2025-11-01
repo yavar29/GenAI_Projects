@@ -1,3 +1,14 @@
+---
+title: Context-Aware AI RAG Assistant
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: 5.22.0
+app_file: main.py
+pinned: false
+---
+
 # Context-Aware AI RAG Assistant
 
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces)

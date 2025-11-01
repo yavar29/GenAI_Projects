@@ -98,6 +98,6 @@ This document exists under `kb/projects/AI-Alter-Ego/README.md` so the assistant
 ## GitHub
 
 - Profile: https://github.com/yavar29
-- Repository: https://github.com/yavar29/GenAI_Projects/tree/main/AI_ALTEREGO
+- Repository: https://github.com/yavar29/GenAI_Projects/tree/main/Context-Aware_AI_RAG_Assistant
 
 

@@ -1,0 +1,75 @@
+import os, uuid
+from pathlib import Path
+import numpy as np
+
+from app.config.settings import OPENAI_MODEL, KB_DIR, CHUNK_MAX_CHARS, CHUNK_OVERLAP_CHARS
+from app.rag.loader import load_text_from_file, iter_kb_files
+from app.rag.embedder import embed_texts
+from app.rag.store import VectorStore, Chunk
+from app.tools import kb_search
+from app.agents.assistant import Assistant
+from app.server.ui_gradio import launch_ui
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pypdf import PdfReader
+
+def chunk_text(text: str, chunk_size: int = 1800, chunk_overlap: int = 300) -> list[str]:
+    """Chunk text using LangChain's RecursiveCharacterTextSplitter for better boundary handling"""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", " ", ""]  # Try paragraph, line, sentence, word boundaries
+    )
+    chunks = splitter.split_text(text)
+    return [c.strip() for c in chunks if c.strip()]
+
+def build_kb_store() -> VectorStore:
+    store = VectorStore()
+    
+    # Check if we already have a populated store
+    if len(store.chunks) > 0:
+        print(f"[FAISS] Using existing vector store with {len(store.chunks)} chunks")
+        return store
+    
+    # Build new store from knowledge base files
+    print("[FAISS] Building new vector store from knowledge base...")
+    for path in iter_kb_files(KB_DIR):
+        raw = load_text_from_file(path)
+        if not raw:
+            continue
+        # Use LangChain's RecursiveCharacterTextSplitter for better chunking
+        parts = chunk_text(raw, chunk_size=CHUNK_MAX_CHARS, chunk_overlap=CHUNK_OVERLAP_CHARS)
+        metas = [{"source": str(path), "section": None, "updated": None} for _ in parts]
+        vecs = embed_texts(parts)
+        chunks = [Chunk(id=str(uuid.uuid4()), text=t, meta=m) for t, m in zip(parts, metas)]
+        store.add(vecs, chunks)
+    
+    print(f"[FAISS] Built vector store with {len(store.chunks)} chunks")
+    return store
+
+def load_me():
+    # Load personal information from environment or config
+    name = os.getenv("ASSISTANT_NAME", "AI Assistant")
+    linkedin_text = ""
+    if Path("me/linkedin.pdf").exists():
+        reader = PdfReader("me/linkedin.pdf")
+        for page in reader.pages:
+            t = page.extract_text()
+            if t: linkedin_text += t + "\n"
+    summary_text = Path("me/summary.txt").read_text(encoding="utf-8") if Path("me/summary.txt").exists() else ""
+    return name, summary_text, linkedin_text
+
+if __name__ == "__main__":
+    # 1) Build KB index
+    store = build_kb_store()
+    stats = store.get_stats()
+    print(f"[FAISS] Vector store ready: {stats['chunk_count']} chunks, dimension {stats['dimension']}", flush=True)
+    kb_search.KB_STORE = store  # expose to tool
+
+    # 2) Load profile materials
+    name, summary_text, linkedin_text = load_me()
+
+    # 3) Spin assistant + UI
+    assistant = Assistant(name=name, summary_text=summary_text, linkedin_text=linkedin_text, model=OPENAI_MODEL)
+    launch_ui(assistant.chat, assistant_instance=assistant)
+

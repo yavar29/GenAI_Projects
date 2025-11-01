@@ -55,7 +55,7 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
     )
     
     with gr.Blocks(
-        title="AI Alter Ego - Intelligent Personal Assistant",
+        title="Context-Aware AI RAG Assistant",
         theme=theme,
         css="""
         * {
@@ -501,7 +501,7 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
                                 <img src="{photo_src}" alt="Profile Photo">
                             </div>
                             <div class="header-text">
-                                <h1>🤖 AI Alter Ego</h1>
+                                <h1>🤖 Context-Aware AI RAG Assistant</h1>
                                 <p>Intelligent Personal Assistant • Choose your interaction style and start chatting!</p>
                             </div>
                         </div>
@@ -511,7 +511,7 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
         if not photo_html:
             photo_html = """
                 <div class="header">
-                    <h1>🤖 AI Alter Ego</h1>
+                    <h1>🤖 Context-Aware AI RAG Assistant</h1>
                     <p>Intelligent Personal Assistant • Choose your interaction style and start chatting!</p>
                 </div>
             """

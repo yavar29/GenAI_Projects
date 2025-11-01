@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# AI Alter Ego Template Setup Script
+# Context-Aware AI RAG Assistant Template Setup Script
 # This script helps create a clean template version of the project
 
-echo "🤖 Setting up AI Alter Ego Template..."
+echo "🤖 Setting up Context-Aware AI RAG Assistant Template..."
 
 # Create backup of original files
 echo "📦 Creating backup of original files..."
@@ -24,7 +24,7 @@ echo "📝 Creating template files..."
 cat > kb/README.md << 'EOF'
 # Knowledge Base Template
 
-This directory contains template files for your AI Alter Ego knowledge base.
+This directory contains template files for your Context-Aware AI RAG Assistant knowledge base.
 
 ## Structure
 

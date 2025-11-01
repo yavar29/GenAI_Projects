@@ -8,7 +8,7 @@ tags: [projects, kb, highlight]
 # Allowed values: yes, no, unknown
 
 projects:
-  - name: AI Alter Ego – Intelligent Personal Assistant
+  - name: Context-Aware AI RAG Assistant
     path: kb/projects/AI-Alter-Ego/README.md
     github_profile: https://github.com/yavar29
     github_repo: https://github.com/yavar29/GenAI_Projects/tree/main/AI_ALTEREGO
@@ -47,7 +47,7 @@ projects:
 ---
 
 ## Quick Links
-- AI Alter Ego – Repo: https://github.com/yavar29/GenAI_Projects/tree/main/AI_ALTEREGO (tags: linkedin:unknown)
+- Context-Aware AI RAG Assistant – Repo: https://github.com/yavar29/GenAI_Projects/tree/main/AI_ALTEREGO (tags: linkedin:unknown)
 - Multi-Agent Weather Assistant – Repo: https://github.com/VectorWorkX/wx-event-reliability (tags: linkedin:unknown)
 - VGG-16 vs ResNet-18 – Repo: https://github.com/yavar29/ML_Projects/tree/main/Deep%20Learning%20Models/VGG%20and%20Resnet (tags: linkedin:unknown)
 - EMNIST Handwritten Character Recognition – Repo: https://github.com/yavar29/ML_Projects/tree/main/Deep%20Learning%20Models/Convolutional%20Neural%20Network (tags: linkedin:unknown)

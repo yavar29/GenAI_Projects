@@ -1,6 +1,6 @@
 # Knowledge Base Template
 
-This directory contains template files for your AI Alter Ego knowledge base.
+This directory contains template files for your Context-Aware AI RAG Assistant knowledge base.
 
 ## Structure
 

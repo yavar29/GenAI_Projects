@@ -6,8 +6,8 @@ import os
 # Examples:
 # PHOTO_URL = "https://example.com/path/to/your/photo.jpg"  # For URL
 # PHOTO_URL = "me/photo.jpg"  # For local file in project directory
-PHOTO_URL = "me/personal_photo2.png"  # Photo for header and chatbot avatar (or None to hide)
-SIDEBAR_PHOTO_URL = "me/image.png"  # Photo for sidebar (or None to hide, uses PHOTO_URL if not set)
+PHOTO_URL = "me/personal_photo6.png"  # Photo for header and chatbot avatar (or None to hide)
+SIDEBAR_PHOTO_URL = "me/personal_photo.jpg"  # Photo for sidebar (or None to hide, uses PHOTO_URL if not set)
 
 def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
     """Create a Gradio interface with persona switching"""
@@ -65,9 +65,9 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
             overflow: auto;
         }
         .gradio-container {
-            max-width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
+            max-width: 1400px !important;
+            margin: 0 auto !important;
+            padding: 16px 24px !important;
             min-height: 100vh !important;
             overflow: auto !important;
         }
@@ -84,7 +84,7 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
         }
         .header {
             text-align: center;
-            padding: 15px 24px;
+            padding: 18px 24px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border-radius: 0;
             margin: 0;
@@ -144,17 +144,13 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
         }
         .content-row {
             flex: 1;
-            overflow: hidden;
-            display: flex;
+            overflow: visible;
+            display: block;
             min-height: 0;
-            padding: 0 24px;
+            padding: 0 0;
             box-sizing: border-box;
         }
-        .sidebar-column {
-            overflow-y: auto;
-            max-height: calc(100vh - 150px);
-            padding-right: 10px;
-        }
+        .sidebar-column { display:none; }
         .chat-column {
             display: flex;
             flex-direction: column;
@@ -168,6 +164,12 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
             position: relative !important;
             overflow-y: auto !important;
         }
+        /* Career gallery */
+        .gallery { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; margin-top:18px; }
+        .gallery .card { border-radius:16px; overflow:hidden; box-shadow:0 16px 32px rgba(0,0,0,0.12); border:1px solid rgba(255,255,255,0.25); background:rgba(255,255,255,0.12); }
+        .gallery img { width:100%; height:220px; object-fit:cover; display:block; }
+        .section-title { margin:28px 0 10px; font-weight:800; font-size:1.25rem; color:#1f2937; }
+        .chat-section { margin-top:28px; padding:0; }
         /* Make chatbot label sticky - targets all possible label selectors */
         .chat-column .chatbot label,
         .chat-column .chatbot > div > label,
@@ -249,6 +251,15 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
             margin: 0 !important;
             width: auto !important;
         }
+        
+        /* Persona selector - purple background matching bio page */
+        .persona-selector-container {
+            background: radial-gradient(1200px 600px at 10% 10%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.02) 40%),
+                        linear-gradient(135deg, #6b7bff 0%, #9b64e8 50%, #e48bf8 100%) !important;
+            border-radius: 22px !important;
+            padding: 24px !important;
+            margin-bottom: 20px !important;
+        }
         .profile-photo-wrapper img {
             width: 100%;
             height: 100%;
@@ -277,6 +288,140 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
             border-radius: 8px;
             margin-top: 10px;
         }
+        /* New hero + stat cards (inspired, not identical) */
+        .hero {
+            background: linear-gradient(135deg, #5b76ea 0%, #8a63e6 100%);
+            border-radius: 16px;
+            padding: 28px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            color: #fff;
+        }
+        .hero-content {
+            display: flex;
+            gap: 28px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+        .hero-left {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            min-width: 280px;
+        }
+        .hero .profile-photo-wrapper {
+            width: 84px;
+            height: 84px;
+        }
+        .hero h2 {
+            margin: 0;
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: 0.2px;
+        }
+        .hero p {
+            margin: 4px 0 0 0;
+            font-size: 0.95rem;
+            opacity: 0.95;
+        }
+        .stat-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            width: 100%;
+            margin-top: 14px;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.12);
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 12px;
+            padding: 12px 14px;
+            color: #fff;
+            backdrop-filter: blur(6px);
+        }
+        .stat-card h4 { margin: 0 0 6px 0; font-size: 0.95rem; font-weight: 700; }
+        .stat-card p { margin: 0; font-size: 0.9rem; opacity: 0.95; }
+        .stat-card p.tag { margin: 4px 0 8px 0; font-size: 0.75rem; opacity: 0.8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        /* Features section (separate from bio) */
+
+        .features-section {
+            background: radial-gradient(1200px 600px at 10% 10%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.02) 40%),
+                        linear-gradient(135deg, #6b7bff 0%, #9b64e8 50%, #e48bf8 100%);
+            border-radius: 22px;
+            padding: 32px 32px 26px 32px;
+            box-shadow: 0 36px 72px rgba(0,0,0,0.14);
+            margin-top: 24px;
+            border: 1px solid rgba(255,255,255,0.18);
+        }
+
+        .features-section .stat-cards {
+            margin-top: 0;
+        }
+        
+        /* Mega hero (two-column) */
+        .mega-hero {
+            background: radial-gradient(1200px 600px at 10% 10%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.02) 40%),
+                        linear-gradient(135deg, #6b7bff 0%, #9b64e8 50%, #e48bf8 100%);
+            border-radius: 22px;
+            /* more height + more breathing space at bottom */
+            padding: 60px 42px 50px 42px;
+            min-height: 360px;
+            box-shadow: 0 36px 72px rgba(0,0,0,0.14);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.22);
+        }
+
+        .mega-hero .content {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 32px; /* slightly more gap */
+            align-items: center;
+        }
+
+        .mega-hero .left .avatar {
+            width: 170px;
+            height: 170px;
+            border-radius: 50%;
+            border: 6px solid rgba(255,255,255,0.95);
+            overflow: hidden;
+            box-shadow: 0 24px 48px rgba(0,0,0,0.35);
+            background: #fff;
+        }
+
+        .mega-hero .left h1 {
+            margin: 0 0 14px 0;
+            font-size: 2.6rem;
+            line-height: 1.08;
+            font-weight: 900;
+            letter-spacing: 0.3px;
+            text-shadow: 0 4px 18px rgba(0,0,0,0.28);
+        }
+        .mega-hero .left p {
+            margin: 0;
+            font-size: 1.08rem;
+            line-height: 1.75;
+            opacity: 0.97;
+            font-weight: 300;
+            max-width: 640px;
+        }
+        .mega-hero .right .glass-card {
+            border-radius: 20px;
+            background: rgba(255,255,255,0.16);
+            border: 1px solid rgba(255,255,255,0.35);
+            padding: 18px;
+            box-shadow: 0 30px 60px rgba(0,0,0,0.28);
+            backdrop-filter: blur(10px);
+        }
+        .mega-hero .right .glass-card img {
+            width: 100%; height: 320px; object-fit: cover; border-radius: 14px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+            display: block;
+        }
+        .mega-hero .caption {
+            color: #fff; text-align: left; margin-top: 14px;
+        }
+        .mega-hero .caption h4 { margin: 0 0 6px; font-size: 1.05rem; font-weight: 800; }
+        .mega-hero .caption p { margin: 0; font-size: 0.95rem; opacity: 0.95; }
         .example-question {
             padding: 8px 12px;
             margin: 5px 0;
@@ -372,90 +517,136 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
             else:
                 sidebar_photo_src = sidebar_photo_path  # URL
         
+        # Top header removed per request
+        
+        # Helper function to convert image to base64
+        def img_to_base64(img_path):
+            from pathlib import Path
+            import base64
+            try:
+                abs_path = Path(img_path).resolve()
+                if abs_path.exists() and abs_path.is_file():
+                    with open(abs_path, 'rb') as f:
+                        img_data = base64.b64encode(f.read()).decode()
+                        ext = abs_path.suffix.lower().replace('.', '')
+                        return f"data:image/{ext};base64,{img_data}"
+            except Exception:
+                pass
+            return None
+        
+       
+        avatar_left_src = img_to_base64("me/personal_photo2.png")
+        right_hero_src = img_to_base64("me/personal_photo11.jpg")
+        gallery_photos = [
+            img_to_base64("me/yk.jpg"),
+            img_to_base64("me/image.png"),
+            img_to_base64("me/personal_photo5.png")
+        ]
+        gallery_photos = [p for p in gallery_photos if p]  # Remove any None values
+        
+        # Lightweight hero + stat cards (non-intrusive, no logic changes)
         with gr.Row():
             with gr.Column():
-                gr.HTML(photo_html)
+                # Build avatar HTML safely
+                avatar_img_tag = f'<img src="{avatar_left_src}" alt="Profile" style="width:100%;height:100%;object-fit:cover;">' if avatar_left_src else '🤖'
+                right_img_tag = f'<img src="{right_hero_src}" alt="Profile" style="width:100%;height:320px;object-fit:cover;">' if right_hero_src else ''
+                
+                hero_html = f"""
+                <div class="mega-hero">
+                  <div class="content">
+                    <div class="left">
+                      <div class="avatar">{avatar_img_tag}</div>
+                      <div>
+                        <h1>Yavar Khan</h1>
+                        <p>Master's in Computer Science - AI/ML Track at SUNY Buffalo with a focus on Generative AI and Agentic Systems. Former Software Engineer exploring RAG, multi-agent orchestration, and Model Context Protocol for adaptive, data-driven AI systems.</p>
+                      </div>
+                    </div>
+                    <div class="right">
+                      <div class="glass-card">
+                        {right_img_tag}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                """
+                gr.HTML(hero_html)
         
+        # Feature cards section (separate from bio)
+        with gr.Row():
+            with gr.Column():
+                features_html = """
+                <div class="features-section">
+                  <div class="stat-cards">
+                    <div class="stat-card glass-card"><h4>Knowledge Engine</h4><p class="tag">FAISS + KB Orchestration</p><p>Context-aware semantic retrieval over curated Knowledge Base.</p></div>
+                    <div class="stat-card glass-card"><h4>Adaptive Personas</h4><p class="tag">Dynamic Persona Switching</p><p>Professional, Mentor, Technical & Casual modes with tone adaptation.</p></div>
+                    <div class="stat-card glass-card"><h4>Conversational Intelligence</h4><p class="tag">Contextual Reasoning Engine</p><p>Logical reasoning + contextual inference to handle unseen questions.</p></div>
+                  </div>
+                </div>
+                """
+                gr.HTML(features_html)
+
         with gr.Row(elem_classes=["content-row"]):
-            with gr.Column(scale=1, min_width=280, elem_classes=["sidebar-column"]):
-                # Sidebar photo
-                if sidebar_photo_src:
-                    gr.HTML(f"""
-                        <div class="sidebar-photo">
-                            <img src="{sidebar_photo_src}" alt="Profile Photo">
-                        </div>
-                    """)
+            with gr.Column():
+                # Photo gallery (3 photos in bottom row)
+                if gallery_photos:
+                    _cards = "".join([f'<div class="card"><img src="{p}" alt="photo" style="width:100%;height:220px;object-fit:cover;"></div>' for p in gallery_photos[:3]])
+                    gr.HTML(f"<div class='gallery'>{_cards}</div>")
+
+                # Persona selector above chatbot
+                with gr.Row(elem_classes=["persona-selector-container"]):
+                    persona_dropdown = gr.Dropdown(
+                        choices=persona_choices,
+                        value="professional",
+                        label="🎭 Select Persona",
+                        info="Choose how the AI should respond"
+                    )
                 
-                # Persona selection
-                persona_dropdown = gr.Dropdown(
-                    choices=persona_choices,
-                    value="professional",
-                    label="🎭 Select Persona",
-                    info="Choose how the AI should respond"
-                )
+                with gr.Row():
+                    persona_description = gr.Markdown(
+                        value=get_persona_description("professional"),
+                        label="Persona Description"
+                    )
                 
-                # Persona description
-                persona_description = gr.Markdown(
-                    value=get_persona_description("professional"),
-                    label="Persona Description"
-                )
-                
-                # Update description when persona changes
                 persona_dropdown.change(
                     fn=get_persona_description,
                     inputs=[persona_dropdown],
                     outputs=[persona_description]
                 )
                 
-                # Example questions
-                with gr.Group():
-                    gr.Markdown("### 💡 Example Questions")
-                    example_q1 = gr.Button("Introduce yourself in 3 lines", size="sm", variant="secondary")
-                    example_q2 = gr.Button("Tell me about your projects other than the ones in LinkedIn/resume", size="sm", variant="secondary")
-                    example_q3 = gr.Button("What's your tech stack?", size="sm", variant="secondary")
-                    example_q4 = gr.Button("How is the chatbot implemented?", size="sm", variant="secondary")
-                
-            with gr.Column(scale=3, elem_classes=["chat-column"]):
-                # Chat interface
+                gr.Markdown("### 💬 Start a conversation")
+                # Full-width chatbot
                 chatbot = gr.Chatbot(
-                    height=400,
-                    label="💬 Chat with Yavar's AI Companion",
+                    height=520,
+                    label="Chat with Yavar",
                     show_label=True,
                     type="messages",
-                    avatar_images=(None, avatar_image),  # Use user's photo as bot avatar
+                    avatar_images=(None, avatar_image),
                     container=True,
                     bubble_full_width=False,
                     show_copy_button=True,
                     scale=1
                 )
-                
+
                 # Input container with textbox and embedded send button
                 with gr.Column(elem_id="input-container"):
                     with gr.Row(elem_id="input-row"):
                         msg = gr.Textbox(
                             placeholder="Ask me anything about my background, skills, projects, or experience...",
                             label="",
-                            lines=2,
+                        lines=2,
                             max_lines=200,
                             show_label=False,
                             container=False,
-                            elem_id="msg-box"      
+                            elem_id="msg-box"
                         )
                         send_btn_embedded = gr.Button("Send ➤", variant="primary", elem_id="send-btn-embedded", size="sm", scale=0, min_width=80)
-                
+
                 # Clear button below textbox
                 with gr.Row(elem_id="actions-row"):
                     clear_btn = gr.Button("🗑️ Clear Chat", variant="secondary", size="sm", elem_id="clear-btn")
 
                 
-        # Example question handlers
-        def fill_example(question):
-            return question
-        
-        example_q1.click(fn=lambda: "Introduce yourself in 3 lines", outputs=msg)
-        example_q2.click(fn=lambda: "Tell me about your projects other than the ones in LinkedIn/resume", outputs=msg)
-        example_q3.click(fn=lambda: "What's your tech stack?", outputs=msg)
-        example_q4.click(fn=lambda: "How is the chatbot implemented?", outputs=msg)
+        # Example question handlers removed (no example buttons in new layout)
         
         # Event handlers
         def user_message(message, history, persona):

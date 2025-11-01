@@ -1,13 +1,10 @@
 ---
-title: Context-Aware AI RAG Assistant
-emoji: 🤖
-colorFrom: blue
-colorTo: purple
+title: Career_Conversation
+app_file: app.py
 sdk: gradio
-sdk_version: "5.22.0"
-app_file: main.py
-pinned: false
+sdk_version: 5.34.2
 ---
+
 
 # Context-Aware AI RAG Assistant
 

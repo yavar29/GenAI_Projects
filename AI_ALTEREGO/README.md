@@ -5,17 +5,18 @@
 [![Gradio](https://img.shields.io/badge/Gradio-5.22+-green.svg)](https://gradio.app)
 [![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4-orange.svg)](https://openai.com)
 
-> **An intelligent AI assistant that embodies a professional persona, capable of answering questions about background, skills, projects, and career aspirations with smart reasoning and contextual understanding.**
+> **An intelligent AI assistant that answers questions in first person about your background, skills, projects, and experience. Features persona switching (Professional, Mentor, Casual, Technical), RAG-based retrieval, and strict grounding to prevent hallucination.**
 
 ## Features
 
-- Retrieval (RAG): Finds relevant context from your notes (markdown, PDFs) to answer questions.
-- Reasoning and tools: Uses function calling to log unknown questions and capture user details when needed.
-- Persona switching: Adjusts tone and style (Professional, Mentor, Casual, Technical).
-- Vector store (FAISS): Speeds up semantic search and persists to disk.
-- Notifications (Pushover): Sends optional alerts for new interactions or unknown questions.
-- Flexible GUI (Gradio): tweak layout and styling as needed.
-- Identity-aware answers with strict grounding and anti‑hallucination policies.
+- **Retrieval (RAG)**: Finds relevant context from your notes (markdown, PDFs) to answer questions.
+- **Reasoning and tools**: Uses function calling to log unknown questions and capture user details when needed.
+- **Persona switching**: Adjusts tone and style (Professional, Mentor, Casual, Technical) via JSON configuration.
+- **Vector store (FAISS)**: Speeds up semantic search and persists to disk.
+- **Notifications (Pushover)**: Sends optional alerts for new interactions or unknown questions.
+- **Flexible GUI (Gradio)**: Customizable layout and styling.
+- **Identity-aware answers**: All questions answered in first person as you (the author), with strict grounding and anti‑hallucination policies.
+- **Persona configuration**: JSON-based persona system with four presets, easily customizable in `persona_config.json`.
 
 ## Architecture
 
@@ -33,7 +34,8 @@ AI-Alter-Ego/
 │   ├── projects/       # Project documentation
 │   └── resume/         # Resume and professional data
 ├── vector_store/        # FAISS index + chunks (auto-created, persisted)
-└── me/              # Personal profile data (linkedIn profile and summary.txt)
+├── me/                  # Personal profile data (linkedIn profile and summary.txt)
+└── persona_config.json  # Persona configuration (Professional, Mentor, Casual, Technical)
 ```
 
 ## Knowledge Base Structure
@@ -47,11 +49,7 @@ kb/
 │   ├── 02-availability.md
 │   ├── 03-work-authorization.md
 │   ├── 04-relocation-preference.md
-│   ├── 05-technical-skills.md
 │   ├── 06-projects-highlight.md
-│   ├── 07-education-background.md
-│   ├── 08-professional-experience.md
-│   ├── 09-research-interests.md
 │   ├── 10-contact-information.md
 │   └── recruiters/         # Behavioral interview responses
 │       ├── 01-salary-expectations.md
@@ -66,19 +64,11 @@ kb/
 │       ├── 10-communication-collaboration.md
 │       └── behavioral-questions.md
 ├── projects/               # Detailed project documentation
-│   ├── project-1/
 │   │   └── README.md
-│   ├── project-2/
 │   │   └── README.md
 │   └── ...
-├── portfolio/              # Portfolio materials
-│   ├── images/
-│   ├── documents/
-│   └── presentations/
 ├── resume/                 # Resume and professional documents
-│   ├── resume.pdf
-│   ├── linkedin.pdf
-│   └── cv.pdf
+│   └── resume.pdf
 └── README.md              # Knowledge base documentation
 ```
 
@@ -86,9 +76,8 @@ kb/
 
 - `kb/faq/`: Common questions and answers about background, skills, projects, and experience.
 - `kb/faq/recruiters/`: Behavioral and recruiter-focused questions.
-- `kb/projects/`: Project folders, each with its own `README.md` and assets.
-- `kb/portfolio/`: Images, documents, and presentations.
-- `kb/resume/`: Resume and professional documents.
+- `kb/projects/`: Project folders, each with its own `README.md` documenting technical details and implementations.
+- `kb/resume/`: Resume and professional documents (PDF format).
 
 Add a new project:
 ```bash
@@ -195,11 +184,11 @@ This will create:
    echo "# My Awesome Project" > kb/projects/my-awesome-project/README.md
    ```
 
-4. **Portfolio Materials** - Add files to `kb/portfolio/`:
+4. **Portfolio Materials** (Optional) - Add files to `kb/portfolio/` if needed:
    ```bash
    # Add images, documents, presentations
-   mkdir kb/portfolio/images
-   mkdir kb/portfolio/documents
+   mkdir -p kb/portfolio/images
+   mkdir -p kb/portfolio/documents
    ```
 
 5. **Resume Documents** - Add PDFs to `kb/resume/`:
@@ -209,11 +198,22 @@ This will create:
    cp /path/to/your/linkedin.pdf kb/resume/
    ```
 
-#### Step 6: Configure System Behavior (Optional)
+#### Step 6: Configure Personas (Optional)
 ```bash
-# Edit system prompts for custom behavior (advanced users only)
-nano app/core/prompts.py
+# Edit persona configurations and prompts
+nano persona_config.json
+
+# Or edit the default personas in Python
+nano app/core/personas.py
 ```
+
+The persona system allows you to customize how the assistant responds:
+- **Professional**: Formal, business-focused responses
+- **Mentor**: Supportive, educational responses
+- **Casual**: Friendly, conversational responses
+- **Technical**: Deep technical focus with precise language
+
+All questions are answered in first person as you (the author), based on the knowledge base content.
 
 ### Running the Application
 
@@ -363,15 +363,19 @@ GRADIO_SERVER_PORT=7861
 ```
 
 ### Customization
-- Modify `app/core/prompts.py` for system behavior
-- Use `app/core/personas.py` or `persona_config.json` to customize/add personas
-- Update `kb/` directory for knowledge base content
-- Adjust `app/config/settings.py` for performance tuning
+- **Personas**: Modify `persona_config.json` for persona behavior and prompts (JSON-based configuration)
+- **Default Personas**: Edit `app/core/personas.py` to change default persona templates (Python-based fallback)
+- **Knowledge Base**: Update `kb/` directory for knowledge base content
+- **Configuration**: Adjust `app/config/settings.py` for performance tuning (chunk sizes, search parameters)
+- **UI**: Customize Gradio interface in `app/server/ui_gradio.py`
 
 ## What's New
 
-- FAISS-based persistent vector store with automatic save/load and significantly faster semantic search
-- Persona switching in the UI with four presets (Professional, Mentor, Casual, Technical) and configurable templates
+- **FAISS-based persistent vector store**: Automatic save/load with significantly faster semantic search
+- **Persona switching**: Four presets (Professional, Mentor, Casual, Technical) with JSON-based configuration
+- **First-person identity**: All questions answered as you (the author) in first person, grounded in knowledge base
+- **Simplified persona system**: Removed chatbot-related prompts; focused on answering questions about background, skills, projects, and experience
+- **Flexible KB structure**: Streamlined FAQ structure focusing on essential information
 
 ## Future Roadmap
 

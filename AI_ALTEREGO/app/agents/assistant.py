@@ -1,6 +1,5 @@
 import json
 from openai import OpenAI
-from app.core.prompts import build_system_prompt
 from app.core.personas import persona_manager
 from app.tools import record_user_details, record_unknown_question, kb_search
 

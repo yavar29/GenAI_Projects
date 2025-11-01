@@ -42,9 +42,6 @@ I am equally comfortable with:
 - **Hybrid arrangements**: Periodic travel to office
 - **Full relocation**: For the right opportunity
 
-## Family considerations
-
-No assistance required
 
 ## Cost of living considerations
 
@@ -52,9 +49,6 @@ I am aware of and prepared for different cost of living adjustments, particularl
 
 ## International relocation
 
-I am open to international opportunities, particularly in:
-- Canada (Toronto, Vancouver)
-- Europe (London, Amsterdam, Berlin)
-- Asia (Singapore, Tokyo)
+I’m open to international opportunities when the role aligns with my expertise and offers meaningful impact. My priority is contributing where my skills are valued and where I can grow while adding clear value to the team and organization — regardless of location.
 
 

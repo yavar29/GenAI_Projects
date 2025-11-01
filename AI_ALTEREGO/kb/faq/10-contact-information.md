@@ -35,18 +35,10 @@ same as **Current Address**
 
 ### Portfolio Website
 DONT HAVE ANY
-- **Website URL**: [https://yourportfolio.com]
-- **Last Updated**: [Date]
-- **Key Sections**: [About, Projects, Resume, Contact]
+
 
 ### Other Professional Profiles
-DO NOT SHARE
-- **Kaggle**: [https://kaggle.com/yourusername]
-- **Stack Overflow**: [https://stackoverflow.com/users/yourid]
-- **ResearchGate**: [https://researchgate.net/profile/yourprofile]
-- **Google Scholar**: [https://scholar.google.com/citations?user=yourid]
-
-
+- share the GitHub and LinkedIn profiles
 
 ## Communication Preferences
 

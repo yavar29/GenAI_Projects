@@ -45,3 +45,5 @@ I am flexible with work schedules and can accommodate:
 - Occasional evening meetings for global teams
 - Weekend work for critical project deadlines
 - Extended hours during project sprints
+- Anything less than or equal to 5 days a week - can adjust my schedule when needed to meet project timelines or team priorities.
+-I’m open to occasional weekend work if a project demands extra attention or during critical delivery phases.

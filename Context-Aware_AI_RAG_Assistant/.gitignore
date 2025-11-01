@@ -1,7 +1,7 @@
 # Personal and backup data
 backup/
 me/
-kb/resume/
+kb/
 
 # Vector index artifacts
 vector_store/
@@ -13,13 +13,5 @@ vector_store/
 __pycache__/
 *.pyc
 
-# Environment variables (never commit API keys!)
+# Environment variables
 .env
-.env.local
-.env.*.local
-
-# OS files
-.DS_Store
-*.swp
-*.swo
-*~

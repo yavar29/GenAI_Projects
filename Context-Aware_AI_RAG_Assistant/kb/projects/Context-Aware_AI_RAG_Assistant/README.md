@@ -89,11 +89,11 @@ Q: Which model powers generation?
 A: Configurable via `OPENAI_MODEL` (defaults to `gpt-4`). Retrieval uses OpenAI embeddings.
 
 Q: How can I verify sources in answers?
-A: Enable citation rendering in the UI or prompt template; retrieved chunk metadata includes file paths (e.g., `kb/projects/AI-Alter-Ego/README.md`).
+A: Enable citation rendering in the UI or prompt template; retrieved chunk metadata includes file paths (e.g., `kb/projects/Context-Aware_AI_RAG_Assistant/README.md`).
 
 ---
 
-This document exists under `kb/projects/AI-Alter-Ego/README.md` so the assistant can cite it when asked about its own implementation.
+This document exists under `kb/projects/Context-Aware_AI_RAG_Assistant/README.md` so the assistant can cite it when asked about its own implementation.
 
 ## GitHub
 

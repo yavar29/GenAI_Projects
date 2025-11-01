@@ -12,3 +12,14 @@ vector_store/
 # Caches
 __pycache__/
 *.pyc
+
+# Environment variables (never commit API keys!)
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+*~

@@ -740,8 +740,8 @@ def launch_ui(chat_fn, assistant_instance=None, photo_url=None, sidebar_photo_ur
         interface.assistant_ref[0] = assistant_instance
     
     interface.launch(
-        server_name="0.0.0.0",
-        server_port=7861,
+        server_name=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
+        server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
         share=False,
         show_error=True
     )

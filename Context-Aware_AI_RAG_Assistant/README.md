@@ -21,7 +21,7 @@
 ## Architecture
 
 ```
-AI-Alter-Ego/
+Context-Aware-AI-RAG-Assistant/
 ├── app/
 │   ├── agents/          # AI Assistant core
 │   ├── config/          # Configuration settings
@@ -124,8 +124,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 #### Step 1: Clone the Repository
 ```bash
-git clone https://github.com/yourusername/AI-Alter-Ego.git
-cd AI-Alter-Ego
+git clone https://github.com/yourusername/context-aware-ai-rag-assistant.git
+cd context-aware-ai-rag-assistant
 ```
 
 #### Step 2: Install Dependencies

@@ -9,7 +9,7 @@ tags: [projects, kb, highlight]
 
 projects:
   - name: Context-Aware AI RAG Assistant
-    path: kb/projects/AI-Alter-Ego/README.md
+    path: kb/projects/Context-Aware_AI_RAG_Assistant/README.md
     github_profile: https://github.com/yavar29
     github_repo: https://github.com/yavar29/GenAI_Projects/tree/main/Context-Aware_AI_RAG_Assistant
     tags: [ai, rag, gradio, personas, linkedin:yes]

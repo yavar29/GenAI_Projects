@@ -1,12 +1,3 @@
-"""
-Public Space, Private KB
-
-- Space is public
-- KB lives in a private HF dataset/repo: yavar29/private-kb
-- At startup we download it using HF_TOKEN (stored as Space secret)
-- Then we build the KB store from the downloaded files
-"""
-
 import os
 import uuid
 from pathlib import Path
@@ -47,7 +38,7 @@ def ensure_private_kb():
             print("[KB] WARNING: HF_TOKEN not set, cannot download private KB")
         else:
             snapshot_download(
-                repo_id="yavar29/kb",  # <-- put your private dataset/repo here
+                repo_id="username/hf-repo-id",  # <-- put your private dataset/repo here
                 local_dir=".",                 # download as-is into current dir
                 use_auth_token=token,
             )
@@ -118,7 +109,7 @@ def load_me():
         summary_text = summary_path.read_text(encoding="utf-8")
     else:
         # fallback text if private me/ is not available
-        summary_text = "Hi, I'm Yavar. This is the public version of my assistant."
+        summary_text = f"Hi, I'm {name}. This is the public version of my assistant."
     return name, summary_text, linkedin_text
 
 

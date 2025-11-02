@@ -1,3 +1,4 @@
+#from tkinter.constants import S
 import gradio as gr
 from app.core.personas import persona_manager
 import os
@@ -5,9 +6,9 @@ import os
 # Photo URL/path - Set this to your photo URL or local file path
 # Examples:
 # PHOTO_URL = "https://example.com/path/to/your/photo.jpg"  # For URL
-# PHOTO_URL = "me/photo.jpg"  # For local file in project directory
-PHOTO_URL = "me/personal_photo6.png"  # Photo for header and chatbot avatar (or None to hide)
-SIDEBAR_PHOTO_URL = "me/personal_photo.jpg"  # Photo for sidebar (or None to hide, uses PHOTO_URL if not set)
+# PHOTO_URL = "assests/photo.jpg"  # For local file in project directory
+PHOTO_URL = "assets/personal_photo6.png"  # Photo for header and chatbot avatar (or None to hide)
+SIDEBAR_PHOTO_URL = "assets/personal_photo.jpg"  # Photo for sidebar (or None to hide, uses PHOTO_URL if not set)
 
 def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
     """Create a Gradio interface with persona switching"""
@@ -554,12 +555,12 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
             return None
         
        
-        avatar_left_src = img_to_base64("me/personal_photo2.png")
-        right_hero_src = img_to_base64("me/personal_photo11.jpg")
+        avatar_left_src = img_to_base64("assets/personal_photo2.png")
+        right_hero_src = img_to_base64("assets/personal_photo11.jpg")
         gallery_photos = [
-            img_to_base64("me/yk.jpg"),
-            img_to_base64("me/image.png"),
-            img_to_base64("me/personal_photo5.png")
+            img_to_base64("assets/yk.jpg"),
+            img_to_base64("assets/image.png"),
+            img_to_base64("assets/personal_photo5.png")
         ]
         gallery_photos = [p for p in gallery_photos if p]  # Remove any None values
         
@@ -740,8 +741,10 @@ def launch_ui(chat_fn, assistant_instance=None, photo_url=None, sidebar_photo_ur
         interface.assistant_ref[0] = assistant_instance
     
     interface.launch(
-        server_name="0.0.0.0",
-        server_port=7861,
+        #server_name=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
+        #server_port=int(os.getenv("GRADIO_SERVER_PORT", "7861")),
+        
+        
         share=False,
         show_error=True
     )

@@ -571,13 +571,17 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
                 avatar_img_tag = f'<img src="{avatar_left_src}" alt="Profile" style="width:100%;height:100%;object-fit:cover;">' if avatar_left_src else '🤖'
                 right_img_tag = f'<img src="{right_hero_src}" alt="Profile" style="width:100%;height:320px;object-fit:cover;">' if right_hero_src else ''
                 
+                # Note: Name will come from assistant instance when available
+                # For now use generic placeholder - the actual identity comes from the assistant's loaded profile
+                display_name = "AI Assistant"
+                
                 hero_html = f"""
                 <div class="mega-hero">
                   <div class="content">
                     <div class="left">
                       <div class="avatar">{avatar_img_tag}</div>
                       <div>
-                        <h1>Yavar Khan</h1>
+                        <h1>{display_name}</h1>
                         <p>Master's in Computer Science - AI/ML Track at SUNY Buffalo with a focus on Generative AI and Agentic Systems. Former Software Engineer exploring RAG, multi-agent orchestration, and Model Context Protocol for adaptive, data-driven AI systems.</p>
                       </div>
                     </div>
@@ -589,7 +593,7 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
                   </div>
                 </div>
                 """
-                gr.HTML(hero_html)
+                hero_component = gr.HTML(hero_html)
         
         # Feature cards section (separate from bio)
         with gr.Row():
@@ -635,9 +639,11 @@ def create_persona_interface(chat_fn, photo_url=None, sidebar_photo_url=None):
                 
                 gr.Markdown("### 💬 Start a conversation")
                 # Full-width chatbot
+                # Label will show name dynamically when assistant instance is available
+                # For now use generic label - actual name comes from assistant's profile
                 chatbot = gr.Chatbot(
                     height=520,
-                    label="Chat with Yavar",
+                    label="Chat with Assistant",
                     show_label=True,
                     type="messages",
                     avatar_images=(None, avatar_image),
@@ -739,6 +745,8 @@ def launch_ui(chat_fn, assistant_instance=None, photo_url=None, sidebar_photo_ur
     # Set assistant reference if provided
     if assistant_instance is not None:
         interface.assistant_ref[0] = assistant_instance
+        # Update UI elements with name from assistant
+        # The chatbot label and hero name will use the assistant's name dynamically
     
     interface.launch(
         #server_name=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),

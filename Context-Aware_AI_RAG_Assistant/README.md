@@ -45,7 +45,7 @@ Context-Aware-AI-RAG-Assistant/
 └── persona_config.json  # Persona configuration (Professional, Mentor, Casual, Technical)
 ```
 
-## Knowledge Base Structure
+## Sample Knowledge Base Structure
 
 The knowledge base (`kb/`) is the heart of your AI assistant. It contains all the information your AI will use to answer questions. You can organize it however you like - here's the flexible structure:
 
@@ -127,7 +127,7 @@ Before you begin, make sure you have:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 📥 Installation
+### Installation
 
 #### Step 1: Clone the Repository
 ```bash
@@ -316,6 +316,24 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
    - Push your code to the Space repository
    - The Space will automatically build and deploy
 
+### Notes on Hugging Face Deployment
+
+Here's how this project is configured for deployment on Hugging Face Spaces:
+
+I'm keeping the Space public, but the **actual Knowledge Base (kb/ + me/) is stored in a private Hugging Face dataset**.
+
+On startup, the app (`app.py`) downloads the private dataset using an `HF_TOKEN` saved in the Space secrets. This keeps personal information (resume, LinkedIn PDF, personal FAQs) separate from the public code repository.
+
+The Space repository only contains code (`app/`, `app.py`, `requirements.txt`, `README.md`) — no resume, no LinkedIn PDF, and no personal FAQs.
+
+I've added empty `__init__.py` files in `app/...` subdirectories so imports like `from app.server.ui_gradio import launch_ui` work correctly on Spaces.
+
+The `requirements.txt` is trimmed down to versions that actually install and work with Hugging Face's Python 3.10 environment.
+
+In the README front-matter, I've set `app_file: app.py` so Hugging Face runs the correct entry point.
+
+The vector store is rebuilt automatically on the Space from the downloaded Knowledge Base, so there's no need to commit `vector_store/` to the repository.
+
 ## Technical Stack
 
 - **Backend**: Python 3.12, FastAPI
@@ -406,7 +424,7 @@ GRADIO_SERVER_PORT=7861
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🌟 Star the Project
+## Star the Project
 
 If you find this project helpful, please give it a ⭐ on GitHub!
 

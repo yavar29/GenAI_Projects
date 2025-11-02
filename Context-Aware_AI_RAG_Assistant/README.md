@@ -320,19 +320,19 @@ This project is designed for seamless deployment on Hugging Face Spaces with Gra
 
 Here's how this project is configured for deployment on Hugging Face Spaces:
 
-I'm keeping the Space public, but the **actual Knowledge Base (kb/ + me/) is stored in a private Hugging Face dataset**.
+- I'm keeping the Space public, but the **actual Knowledge Base (kb/ + me/) is stored in a private Hugging Face dataset**.
 
-On startup, the app (`app.py`) downloads the private dataset using an `HF_TOKEN` saved in the Space secrets. This keeps personal information (resume, LinkedIn PDF, personal FAQs) separate from the public code repository.
+- On startup, the app (`app.py`) downloads the private dataset using an `HF_TOKEN` saved in the Space secrets. This keeps personal information (resume, LinkedIn PDF, personal FAQs) separate from the public code repository.
 
-The Space repository only contains code (`app/`, `app.py`, `requirements.txt`, `README.md`) — no resume, no LinkedIn PDF, and no personal FAQs.
+- The Space repository only contains code (`app/`, `app.py`, `requirements.txt`, `README.md`) — no resume, no LinkedIn PDF, and no personal FAQs.
 
-I've added empty `__init__.py` files in `app/...` subdirectories so imports like `from app.server.ui_gradio import launch_ui` work correctly on Spaces.
+- I've added empty `__init__.py` files in `app/...` subdirectories so imports like `from app.server.ui_gradio import launch_ui` work correctly on Spaces.
 
-The `requirements.txt` is trimmed down to versions that actually install and work with Hugging Face's Python 3.10 environment.
+- The `requirements.txt` is trimmed down to versions that actually install and work with Hugging Face's Python 3.10 environment.
 
-In the README front-matter, I've set `app_file: app.py` so Hugging Face runs the correct entry point.
+- In the README front-matter, I've set `app_file: app.py` so Hugging Face runs the correct entry point.
 
-The vector store is rebuilt automatically on the Space from the downloaded Knowledge Base, so there's no need to commit `vector_store/` to the repository.
+- The vector store is rebuilt automatically on the Space from the downloaded Knowledge Base, so there's no need to commit `vector_store/` to the repository.
 
 ## Technical Stack
 

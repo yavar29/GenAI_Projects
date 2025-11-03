@@ -131,7 +131,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 #### Step 1: Clone the Repository
 ```bash
-git clone https://github.com/yavar29/GenAI_Projects.git
+git clone https://github.com/yavar29/GenAI_Projects/tree/main/Context-Aware_AI_RAG_Assistant
 cd GenAI_Projects/Context-Aware_AI_RAG_Assistant
 ```
 

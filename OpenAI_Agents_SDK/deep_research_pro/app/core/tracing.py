@@ -1,12 +1,29 @@
 from __future__ import annotations
-import os
+from contextlib import contextmanager
+from typing import Iterator, Optional
+from agents import trace, gen_trace_id
 
-def enable_tracing() -> None:
+TRACE_DASHBOARD = "https://platform.openai.com/traces/trace?trace_id="
+
+def enable_tracing(enabled: bool = True) -> None:
     """
-    Minimal switch for OpenAI Traces. We keep it off by default to avoid surprises.
-    Turn this on in later iterations by setting envs here.
+    Enable or disable tracing for the Agents SDK.
+    This is a placeholder - actual tracing is controlled via environment variables.
     """
-    # Example (commented for now):
-    # os.environ["OPENAI_TRACING"] = "1"
-    # os.environ["OPENAI_TRACE_SAMPLE_RATE"] = "1.0"
-    pass
+    if enabled:
+        # Tracing is enabled via OPENAI_TRACING environment variable
+        # The SDK will automatically use it if set
+        pass
+
+@contextmanager
+def start_trace(name: str, trace_id: Optional[str] = None) -> Iterator[None]:
+    """
+    Opens an SDK trace context and prints a clickable link.
+    Usage:
+        with start_trace("Deep Research Pro"):
+            ...
+    """
+    tid = trace_id or gen_trace_id()
+    print(f"🔗 Trace: {TRACE_DASHBOARD}{tid}")
+    with trace(name, trace_id=tid):
+        yield

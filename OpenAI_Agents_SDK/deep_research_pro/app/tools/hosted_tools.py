@@ -73,21 +73,21 @@ def _get_hosted_agent() -> Agent:
         )
     return _HOSTED_AGENT
 
-def _hosted_web_search(query: str) -> List[Dict]:
+async def _hosted_web_search_async(query: str) -> List[Dict]:
     """
-    Run the hosted web search agent and normalize to List[dict].
+    Run the hosted web search agent (async) and normalize to List[dict].
     Falls back to stub if anything fails.
     """
     try:
         agent = _get_hosted_agent()
-        result = Runner.run_sync(agent, query)
+        result = await Runner.run(agent, query)
         payload = result.final_output_as(SearchOutput)
         out: List[Dict] = []
         for r in payload.results:
             out.append({
-                "title": r.title,
+                "title": (r.title or "").strip(),
                 "url": r.url,            # already a str
-                "snippet": r.snippet or "",
+                "snippet": (r.snippet or "").strip(),
                 "published": r.published,
                 "provider": "openai",
             })
@@ -104,6 +104,17 @@ def _hosted_web_search(query: str) -> List[Dict]:
     except Exception:
         return _stub_web_search(query)
 
+def _hosted_web_search(query: str) -> List[Dict]:
+    """
+    Sync wrapper for hosted web search (for backward compatibility).
+    Falls back to stub if anything fails.
+    """
+    import asyncio
+    try:
+        return asyncio.run(_hosted_web_search_async(query))
+    except Exception:
+        return _stub_web_search(query)
+
 def get_hosted_web_search() -> Callable[[str], List[Dict]]:
     """Expose the hosted search provider as a callable(query)->list[dict]."""
     return _hosted_web_search
@@ -111,7 +122,7 @@ def get_hosted_web_search() -> Callable[[str], List[Dict]]:
 # -----------------------------
 # Public provider selection
 # -----------------------------
-def get_search_provider(name: str) -> Callable[[str], List[Dict]]:
+def get_search_provider(name: str, debug: bool = False) -> Callable[[str], List[Dict]]:
     """
     Factory: "stub" or "hosted" -> callable(query)->list[dict]
     """

@@ -1,17 +1,4 @@
 from __future__ import annotations
-import argparse
-from pathlib import Path
-from rich import print
-
-from app.core.settings import PROJECT_NAME, OPENAI_API_KEY, DB_PATH
-from app.core.sessions import get_session
-from app.core.tracing import enable_tracing
-from app.tools.hosted_tools import get_search_provider
-
-from app.agents.planner_agent import PlannerAgent
-from app.agents.search_agent import SearchAgent
-from app.agents.writer_agent import WriterAgent
-from app.agents.verifier_agent import VerifierAgent
 from app.schemas.verify import VerificationOutput
 
 # --- Score explainer (mirrors verifier's domain weights) ---
@@ -57,8 +44,7 @@ def _score_explainer(urls: list[str]) -> tuple[list[str], list[str]]:
             drags.append(dom)
     return boosts, drags
 
-
-def _render_markdown(report, verification: VerificationOutput | None) -> str:
+def render_markdown(report, verification: VerificationOutput | None) -> str:
     lines = [f"# {report.topic}", ""]
 
     # Collect unique references across all sections
@@ -136,55 +122,3 @@ def _render_markdown(report, verification: VerificationOutput | None) -> str:
 
     return "\n".join(lines)
 
-def main():
-    parser = argparse.ArgumentParser(description="Deep Research Pro — Iteration 3 (Verifier)")
-    parser.add_argument("--topic", type=str, default="AI in healthcare", help="Research topic")
-    parser.add_argument("--n", type=int, default=8, help="Max sources to return")
-    parser.add_argument("--provider", type=str, choices=["stub", "hosted"], default="stub", help="Search provider to use")
-    parser.add_argument("--no-verify", action="store_true", help="Skip verification step")
-    parser.add_argument("--strict-verify", action="store_true", help="Blend LLM confidence with coverage/quality/recency metrics")
-    parser.add_argument("--save", type=str, default="", help="Optional path to save Markdown report")
-    parser.add_argument("--trace", action="store_true", help="Enable OpenAI tracing for this run")
-
-    args = parser.parse_args()
-
-    print(f"[bold cyan]{PROJECT_NAME}[/bold cyan] • Iteration 3 (Planner + Search + Writer + Verifier: {args.provider})")
-    print(":key: OPENAI_API_KEY detected" if OPENAI_API_KEY else ":warning: OPENAI_API_KEY not set (ok for stub)")
-
-    enable_tracing(args.trace)
-    session = get_session(DB_PATH)
-    web_search = get_search_provider(args.provider)
-
-    # 1) Plan
-    plan = PlannerAgent().plan(args.topic)
-
-    # 2) Search
-    searcher = SearchAgent(search_func=web_search)
-    sources = searcher.search_many(plan.queries, limit_total=args.n)
-
-    # 3) Write
-    writer = WriterAgent()
-    report = writer.draft(plan.topic, plan.subtopics, sources)
-
-    # 4) Verify (optional)
-    verification = None
-    if not args.no_verify:
-        # Use tools only when provider is hosted (so verifier can re-check selectively)
-        use_tools = (args.provider == "hosted")
-        #verifier = VerifierAgent(use_tools=use_tools)
-        verifier = VerifierAgent(use_tools=use_tools, strict=args.strict_verify)
-        verification = verifier.verify(report)
-
-    # 5) Render Markdown
-    md = _render_markdown(report, verification)
-    print(md)
-
-    # 6) Optional save
-    if args.save:
-        out_path = Path(args.save)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(md, encoding="utf-8")
-        print(f"\n[green]Saved report → {out_path}[/green]")
-
-if __name__ == "__main__":
-    main()

@@ -1,123 +1,67 @@
 from __future__ import annotations
-from app.schemas.verify import VerificationOutput
+import re
+from typing import Dict, Optional
 
-# --- Score explainer (mirrors verifier's domain weights) ---
-_DOMAIN_WEIGHTS = {
-    "gov": 1.0, "europa.eu": 1.0, "who.int": 1.0, "oecd.org": 1.0,
-    "jamanetwork.com": 1.0, "nejm.org": 1.0, "nature.com": 1.0, "reuters.com": 1.0,
-    "ft.com": 0.8, "apnews.com": 0.8, "bbc.com": 0.8, "nytimes.com": 0.8, "economist.com": 0.8,
-}
-
-def _domain_weight(url: str) -> float:
-    u = (url or "").lower()
-    for dom, w in _DOMAIN_WEIGHTS.items():
-        if dom in u:
-            return w
-    if u.endswith(".gov") or ".gov/" in u:
-        return 1.0
-    if u.endswith(".edu") or ".edu/" in u:
-        return 0.85
-    return 0.4
-
-def _domain_from_url(url: str) -> str:
-    # tiny domain extractor good enough for display (no extra deps)
-    try:
-        without_scheme = url.split("://", 1)[-1]
-        host = without_scheme.split("/", 1)[0]
-        return host.lower()
-    except Exception:
-        return url
-
-def _score_explainer(urls: list[str]) -> tuple[list[str], list[str]]:
-    """Return two lists: boosts (>=0.8) and drags (<=0.5) by domain, deduped."""
-    boosts, drags = [], []
-    seen = set()
-    for u in urls or []:
-        dom = _domain_from_url(u)
-        if dom in seen:
-            continue
-        seen.add(dom)
-        w = _domain_weight(u)
-        if w >= 0.8:
-            boosts.append(dom)
-        elif w <= 0.5:
-            drags.append(dom)
-    return boosts, drags
-
-def render_markdown(report, verification: VerificationOutput | None) -> str:
+def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> str:  # type: ignore
+    """
+    Render ResearchReport to markdown.
+    
+    Args:
+        report: ResearchReport object
+        source_index: Optional dict mapping numeric ID -> SourceItem (for deterministic citations)
+    """
     lines = [f"# {report.topic}", ""]
 
-    # Collect unique references across all sections
-    ref_map: dict[str, int] = {}
-    for sec in report.sections:
-        for u in sec.citations:
-            if u and u not in ref_map:
-                ref_map[u] = len(ref_map) + 1
-
-    # Sections with numbered inline citations
-    for i, sec in enumerate(report.sections, 1):
-        lines.append(f"## {i}. {sec.title}")
-        lines.append(sec.summary.strip())
-        if sec.citations:
-            nums = [str(ref_map[u]) for u in sec.citations if u in ref_map]
-            if nums:
-                lines.append("**Citations:** " + ", ".join(f"[{n}]" for n in nums))
+    # Show outline first if available
+    if report.outline:
+        lines.append("## Outline")
+        for item in report.outline:
+            lines.append(f"- {item}")
         lines.append("")
 
-    # Notes
+    # Build references programmatically from Source Index using section.citations (IDs)
+    if source_index:
+        # Use Source Index for deterministic citations
+        id_to_source = source_index
+        
+        # Collect all citation IDs from section.citations
+        all_citation_ids = set()
+        for sec in report.sections:
+            for citation_id in sec.citations:
+                if citation_id in id_to_source:
+                    all_citation_ids.add(citation_id)
+        
+        # Build reference map from Source Index (ID -> SourceItem)
+        ref_map: Dict[int, any] = {cid: id_to_source[cid] for cid in sorted(all_citation_ids)}
+    else:
+        # Fallback: If no source_index, can't render references properly
+        ref_map: Dict[int, any] = {}
+
+    # Sections with inline citations already in text (no separate Citations line)
+    for i, sec in enumerate(report.sections, 1):
+        lines.append(f"## {i}. {sec.title}")
+        # The summary already contains inline citations [1], [2] from the Writer
+        lines.append(sec.summary.strip())
+        lines.append("")
+
+    # Notes (may include next steps)
     if report.notes:
         lines.append("## Notes")
         for n in report.notes:
             lines.append(f"- {n}")
         lines.append("")
 
-    # Verification
-    if verification:
-        lines.append("## Verification")
-        lines.append(f"**Overall confidence:** {verification.overall_confidence:.2f}")
-        lines.append("")
-        for j, r in enumerate(verification.reviews, 1):
-            lines.append(f"### {j}. {r.section_title}")
-            lines.append(f"- **Confidence:** {r.confidence:.2f}")
-            lines.append(f"- **Reasoning:** {r.reasoning}")
-            if r.issues:
-                lines.append("- **Issues:**")
-                for issue in r.issues:
-                    lines.append(f"  - {issue}")
-            # map cited_urls to reference numbers if present
-            if r.cited_urls:
-                ref_nums = [str(ref_map[u]) for u in r.cited_urls if u in ref_map]
-                if ref_nums:
-                    lines.append(f"- **Checked citations:** " + ", ".join(f"[{n}]" for n in ref_nums))
-
-            # print strict-verify metrics when available
-            if getattr(r, "metrics", None):
-                lines.append(
-                    f"- **Metrics:** "
-                    f"llm={r.metrics.llm_conf:.2f}, "
-                    f"coverage={r.metrics.coverage:.2f}, "
-                    f"quality={r.metrics.quality:.2f}, "
-                    f"recency={r.metrics.recency:.2f}, "
-                    f"**final={r.metrics.final:.2f}**"
-                )
-                # Why this score?' explainer using source domains
-                boosts, drags = _score_explainer(r.cited_urls or [])
-                parts = []
-                if boosts:
-                    parts.append("+" + ", +".join(boosts[:4]) + ("…" if len(boosts) > 4 else ""))
-                if drags:
-                    parts.append("−" + ", −".join(drags[:4]) + ("…" if len(drags) > 4 else ""))
-                if parts:
-                    lines.append(f"- **Why this score?** " + " · ".join(parts))
-
-            
-            lines.append("")
-
-    # References (angle brackets prevent weird wrapping)
+    # References: Build programmatically from Source Index
     if ref_map:
         lines.append("## References")
-        for url, idx in sorted(ref_map.items(), key=lambda kv: kv[1]):
-            lines.append(f"[{idx}] <{url}>")
+        # Use Source Index: render as [id] title — <url>
+        for citation_id, source_item in ref_map.items():
+            url = source_item.url if hasattr(source_item, 'url') else str(source_item)
+            title = source_item.title if hasattr(source_item, 'title') else ""
+            if title:
+                lines.append(f"[{citation_id}] {title} — <{url}>")
+            else:
+                lines.append(f"[{citation_id}] <{url}>")
         lines.append("")
 
     return "\n".join(lines)

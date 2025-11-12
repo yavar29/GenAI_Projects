@@ -5,157 +5,138 @@ Provides an interactive web UI for the research assistant.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-# Add the project root to Python path if running directly
-if __name__ == "__main__":
-    project_root = Path(__file__).parent.parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
 
 import gradio as gr
 import os
-import asyncio
-import random
-from openai import APIConnectionError, APITimeoutError
 
 from app.core.settings import PROJECT_NAME, OPENAI_API_KEY
 from app.core.openai_client import make_async_client
+from app.core.research_manager import ResearchManager
 
 # Ensure OPENAI_API_KEY is in environment for Agents SDK
 # The SDK reads from os.environ, not just from dotenv
 if OPENAI_API_KEY and not os.environ.get("OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-from app.tools.hosted_tools import get_search_provider
-from app.agents.planner_agent import PlannerAgent
-from app.agents.search_agent import SearchAgent
-from app.agents.writer_agent import WriterAgent
-from app.agents.verifier_agent import VerifierAgent
-from app.core.render import render_markdown
 
-# Retry backoff times
-BACKOFFS = [0.5, 1.0, 2.0, 4.0]
+async def generate_plan_async(topic: str, num_searches: int, num_sources: int, mode: str):
+    """
+    Generate search plan (queries) for user review.
+    
+    Returns:
+        Tuple of (queries_list, thoughts_text, status_text)
+    """
+    if not topic or not topic.strip():
+        return ([], "", "❌ Please enter a research topic")
+    
+    try:
+        manager = ResearchManager(
+            openai_client=make_async_client(),
+            mode=mode,
+            num_searches=num_searches,
+            num_sources=num_sources
+        )
+        
+        query_response = await manager.generate_plan(topic)
+        
+        # Format queries as list for editable textboxes
+        queries_list = query_response.queries if query_response.queries else []
+        thoughts = query_response.thoughts or "No thoughts provided."
+        status = f"✅ Generated {len(queries_list)} search queries. Review and edit them below, then click 'Approve & Start Research'."
+        
+        return (queries_list, thoughts, status)
+    except Exception as e:
+        return ([], "", f"❌ Error generating plan: {str(e)}")
 
-async def with_retry(coro_factory):
-    """Retry a coroutine with exponential backoff."""
-    for i, b in enumerate(BACKOFFS, 1):
-        try:
-            return await coro_factory()
-        except (APIConnectionError, APITimeoutError):
-            if i == len(BACKOFFS):
-                raise
-            await asyncio.sleep(b + random.random() * 0.25)
 
+def _trim_log(text: str, max_lines: int = 250) -> str:
+    """Trim log to last N lines."""
+    lines = text.splitlines()
+    return "\n".join(lines[-max_lines:])
+
+def _truncate_message(text: str, max_chars: int = 2000) -> str:
+    """Truncate single status message if too long."""
+    if len(text) > max_chars:
+        return text[:max_chars] + "... (truncated)"
+    return text
 
 async def run_research_stream(
     topic: str,
+    approved_queries: list,
+    num_searches: int,
     num_sources: int,
-    provider: str,
-    strict_verify: bool,
-    use_sdk_planner: bool,
+    max_waves: int,
+    mode: str,
+    show_outline: bool,
 ):
     """
-    Async generator for research pipeline with hardened client and retry logic.
-    Yields status updates and final results - Gradio handles async natively.
+    Async generator for research pipeline using ResearchManager.
+    Uses pre-approved queries from user.
+    
+    Args:
+        topic: Research topic/query
+        approved_queries: List of approved/edited queries
+        num_searches: Number of search queries to perform
+        num_sources: Maximum number of sources to return
+        max_waves: Maximum number of research waves
+        mode: "Smart" (default) = LLM planning + deep search
+              "Fast" = heuristic planning + shallow search
+        show_outline: Whether to show outline preview
     """
-    if not topic or not topic.strip():
-        yield ("", [], "", "❌ Please enter a research topic")
+    # Filter out empty queries
+    queries = [q.strip() for q in approved_queries if q and q.strip()]
+    
+    if not queries:
+        yield ("", [], "❌ Please provide at least one search query", gr.update(visible=False))
         return
     
-    # Create single hardened OpenAI client for all agents
-    openai_client = make_async_client()
+    # Create ResearchManager with settings
+    manager = ResearchManager(
+        openai_client=make_async_client(),
+        mode=mode,
+        num_searches=num_searches,
+        num_sources=num_sources,
+        max_waves=max_waves
+    )
     
-    # Ensure API key is in environment for Agents SDK
-    if OPENAI_API_KEY and not os.environ.get("OPENAI_API_KEY"):
-        os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+    # Show mode/waves/sources in first log line
+    first_status = f"Mode: {mode} | Max Waves: {max_waves} | Max Sources: {num_sources}\n\n"
     
-    status = ["🔄 Initializing..."]
-    yield ("", [], "", "\n".join(status))
-    
-    try:
-        # Check API key if using hosted provider
-        if provider == "hosted":
-            if not OPENAI_API_KEY:
-                yield ("", [], "", "❌ Error: OPENAI_API_KEY not set. Required for 'hosted' provider.\n\nPlease check:\n1. Your .env file exists in the project root\n2. It contains: OPENAI_API_KEY=sk-...\n3. The API key is valid and not expired")
-                return
-            
-            # Verify API key format
-            if not OPENAI_API_KEY.startswith(("sk-", "sk-proj-")):
-                yield ("", [], "", f"❌ Error: Invalid API key format. Should start with 'sk-' or 'sk-proj-'\n\nCurrent key starts with: {OPENAI_API_KEY[:10] if len(OPENAI_API_KEY) > 10 else 'too short'}...")
-                return
+    # Delegate to ResearchManager with approved queries
+    async for result in manager.run(topic, approved_queries=queries):
+        report_md, sources_data, status_text = result
         
-        web_search = get_search_provider(provider, debug=False)
+        # Prepend first status line if this is the first yield
+        if first_status:
+            status_text = first_status + status_text
+            first_status = None
         
-        status.append("📋 Planning research strategy...")
-        yield ("", [], "", "\n".join(status))
+        # Status text already has double line breaks from ResearchManager for better spacing
+        # Add auto-scroll anchor
+        status_text += "\n\n<div id=\"end\"></div>"
         
-        planner = PlannerAgent(use_sdk=use_sdk_planner, openai_client=openai_client)
-        plan = await (planner.plan_async(topic) if use_sdk_planner else asyncio.to_thread(planner.plan, topic))
+        # Extract outline from report if available and show_outline is True
+        outline_update = gr.update(visible=False)
+        if show_outline and report_md:
+            # Try to extract outline from report markdown
+            lines = report_md.split("\n")
+            outline_lines = []
+            in_outline = False
+            for line in lines:
+                if line.strip().startswith("## Outline"):
+                    in_outline = True
+                    outline_lines.append(line)
+                elif in_outline:
+                    if line.strip().startswith("##") and not line.strip().startswith("## Outline"):
+                        break
+                    if line.strip().startswith("-") or line.strip().startswith("*"):
+                        outline_lines.append(line)
+            if outline_lines:
+                outline_text = "\n".join(outline_lines)
+                outline_update = gr.update(value=outline_text, visible=True)
         
-        status.append(f"✅ Planned {len(plan.queries)} search queries")
-        yield ("", [], "", "\n".join(status))
-        
-        status.append(f"🔍 Searching {len(plan.queries)} queries...")
-        yield ("", [], "", "\n".join(status))
-        
-        searcher = SearchAgent(search_func=web_search)
-        sources = await searcher.search_many_async(plan.queries, limit_total=num_sources)
-        
-        status.append(f"✅ Found {len(sources)} sources")
-        yield ("", [], "", "\n".join(status))
-        
-        status.append("✍️ Writing research report...")
-        yield ("", [], "", "\n".join(status))
-        
-        writer = WriterAgent(openai_client=openai_client)
-        report = await with_retry(lambda: writer.draft_async(topic, plan.subtopics, sources))
-        
-        status.append(f"✅ Generated report with {len(report.sections)} sections")
-        yield ("", [], "", "\n".join(status))
-        
-        status.append("🔍 Verifying claims and sources...")
-        yield ("", [], "", "\n".join(status))
-        
-        verifier = VerifierAgent(strict=strict_verify, openai_client=openai_client)
-        verification = await with_retry(lambda: verifier.verify_async(report))
-        
-        status.append(f"✅ Verification complete (confidence: {verification.overall_confidence:.2f})")
-        yield ("", [], "", "\n".join(status))
-        
-        # render + tables
-        md = render_markdown(report, verification)
-        
-        sources_data = []
-        for s in sources:
-            title = s.title if len(s.title) <= 80 else s.title[:80] + "..."
-            sources_data.append([title, str(s.url), s.source_type, s.published or "N/A"])
-        
-        verification_md = f"# Verification Results\n\n**Overall Confidence:** {verification.overall_confidence:.2f}\n\n## Section Reviews\n\n"
-        for r in verification.reviews:
-            verification_md += f"### {r.section_title}\n\n- **Confidence:** {r.confidence:.2f}\n- **Reasoning:** {r.reasoning}\n\n"
-            if getattr(r, "issues", None):
-                verification_md += "**Issues:**\n" + "\n".join(f"- {i}" for i in r.issues) + "\n\n"
-            if getattr(r, "metrics", None):
-                m = r.metrics
-                verification_md += f"**Metrics:**\n- LLM Confidence: {m.llm_conf:.2f}\n- Coverage: {m.coverage:.2f}\n- Quality: {m.quality:.2f}\n- Recency: {m.recency:.2f}\n- **Final Score:** {m.final:.2f}\n\n"
-        
-        verification_md += f"\n**Methodology:** {verification.methodology}"
-        
-        status.append("✅ Complete!")
-        yield (md, sources_data, verification_md, "\n".join(status))
-        
-    except Exception as e:
-        emsg = str(e)
-        error_type = type(e).__name__
-        
-        if "Connection error" in emsg or "APIConnectionError" in error_type:
-            yield ("", [], "", f"❌ Connection Error: check internet/API key.\n\nDetails: {emsg}")
-        elif "Event loop" in emsg or "no current event loop" in emsg:
-            yield ("", [], "", f"❌ Event Loop Error: internal async issue.\n\nDetails: {emsg}")
-        else:
-            yield ("", [], "", f"❌ Error ({error_type}): {emsg}")
+        yield (report_md, sources_data, status_text, outline_update)
 
 
 
@@ -178,14 +159,37 @@ def create_interface():
             border-radius: 5px;
             font-family: monospace;
         }
+        #live-log {
+            max-height: 600px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            background: #f9fafb !important;
+            color: #111827 !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        #live-log * {
+            color: #111827 !important;
+        }
+        #live-log pre, #live-log code {
+            color: #111827 !important;
+            background: transparent;
+        }
+        #live-log p {
+            color: #111827 !important;
+            margin: 0.5em 0;
+        }
         """
     ) as demo:
         gr.Markdown(
             f"""
-            # 🔬 {PROJECT_NAME}
-            ### AI-Powered Research Assistant with Verification
-            
-            Enter a research topic below and get a comprehensive, verified research report with citations.
+                # 🔬 {PROJECT_NAME}
+                ### AI-Powered Research Assistant
+
+                Enter a research topic below and get a comprehensive research report with citations.
             """
         )
         
@@ -199,6 +203,22 @@ def create_interface():
                 )
                 
                 with gr.Accordion("Advanced Options", open=False):
+                    mode = gr.Radio(
+                        choices=["Smart", "Fast"],
+                        value="Smart",
+                        label="Mode",
+                        info="Smart: LLM planning + deep search | Fast: heuristic planning + shallow search"
+                    )
+                    
+                    num_searches = gr.Slider(
+                        minimum=3,
+                        maximum=10,
+                        value=5,
+                        step=1,
+                        label="Number of Searches",
+                        info="Number of search queries to perform"
+                    )
+                    
                     num_sources = gr.Slider(
                         minimum=5,
                         maximum=20,
@@ -208,39 +228,66 @@ def create_interface():
                         info="Maximum number of sources to return from all queries (not the number of queries)"
                     )
                     
-                    provider = gr.Radio(
-                        choices=["stub", "hosted"],
-                        value="hosted",
-                        label="Search Provider",
-                        info="'stub' for testing, 'hosted' for real OpenAI search"
+                    max_waves = gr.Slider(
+                        minimum=1,
+                        maximum=3,
+                        value=3,
+                        step=1,
+                        label="Max Waves",
+                        info="Maximum number of research waves (Wave 1 + follow-ups)"
                     )
                     
-                    strict_verify = gr.Checkbox(
+                    show_outline = gr.Checkbox(
+                        label="Show Outline (preview)",
                         value=True,
-                        label="Strict Verification",
-                        info="Enable advanced verification with coverage, quality, and recency metrics"
-                    )
-                    
-                    use_sdk_planner = gr.Checkbox(
-                        value=False,
-                        label="Use LLM Planner",
-                        info="Use AI-powered planning (slower but smarter) vs. fast heuristic planning"
+                        info="Preview the report outline before final synthesis"
                     )
                 
-                research_btn = gr.Button(
-                    "🔍 Start Research",
-                    variant="primary",
-                    size="lg"
+                # State to store generated queries
+                plan_state = gr.State(value={"queries": [], "topic": "", "thoughts": ""})
+                
+                generate_plan_btn = gr.Button(
+                    "📋 Generate Search Plan",
+                    variant="primary"
                 )
-            
-            with gr.Column(scale=1):
-                status_display = gr.Textbox(
-                    label="Status",
-                    value="Ready to research",
-                    lines=5,
-                    interactive=False,
-                    elem_classes=["status-box"]
-                )
+                
+                # Query editing section (initially hidden)
+                with gr.Group(visible=False) as plan_section:
+                    gr.Markdown("### 📝 Review & Edit Search Queries")
+                    
+                    plan_thoughts = gr.Textbox(
+                        label="Planning Thoughts",
+                        lines=3,
+                        interactive=False,
+                        info="The AI's reasoning for these queries"
+                    )
+                    
+                    query_inputs = gr.Dataframe(
+                        headers=["Search Query"],
+                        label="Search Queries (editable)",
+                        interactive=True,
+                        wrap=True,
+                        type="array",
+                        col_count=(1, "fixed"),
+                    )
+                    
+                    with gr.Row():
+                        approve_btn = gr.Button(
+                            "✅ Approve & Start Research",
+                            variant="primary"
+                        )
+                        skip_btn = gr.Button(
+                            "⏭️ Skip & Use Original",
+                            variant="secondary"
+                        )
+        
+        # Live Log in its own row below controls
+        with gr.Row():
+            with gr.Column():
+                with gr.Accordion("📊 Live Log (streaming)", open=True):
+                    live_log = gr.Markdown(value="Ready.", elem_id="live-log")
+                
+                outline_md = gr.Markdown(visible=False, label="Outline Preview")
         
         with gr.Tabs():
             with gr.Tab("📄 Report"):
@@ -278,12 +325,6 @@ def create_interface():
                     wrap=True,
                 )
             
-            with gr.Tab("✅ Verification"):
-                verification_display = gr.Markdown(
-                    label="Verification Results",
-                    value="# Verification results will appear here..."
-                )
-            
             with gr.Tab("ℹ️ About"):
                 gr.Markdown(
                     """
@@ -294,14 +335,11 @@ def create_interface():
                     - **Plans** research strategies with multiple search queries
                     - **Searches** the web for relevant sources
                     - **Writes** comprehensive research reports with citations
-                    - **Verifies** claims with advanced metrics (coverage, quality, recency)
                     
                     ### Features
                     
-                    - ✅ Multi-agent architecture (Planner, Search, Writer, Verifier)
+                    - ✅ Multi-agent architecture (Planner, Search, Writer)
                     - ✅ Parallel search execution
-                    - ✅ Source credibility scoring
-                    - ✅ Advanced verification metrics
                     - ✅ Structured outputs with citations
                     
                     ### How It Works
@@ -309,14 +347,17 @@ def create_interface():
                     1. **Planning**: Creates a research plan with subtopics and search queries
                     2. **Search**: Searches the web in parallel for relevant sources
                     3. **Writing**: Generates a structured research report with citations
-                    4. **Verification**: Verifies claims and scores source quality
+                    
+                    ### Modes
+                    
+                    - **Smart Mode** (default): Uses LLM planning and deep search for highest quality results
+                    - **Fast Mode**: Uses heuristic planning and shallow search for quick results
                     
                     ### Tips
                     
                     - Use specific topics for better results
-                    - Enable "Strict Verification" for detailed metrics
-                    - Use "LLM Planner" for complex topics (slower but smarter)
-                    - Check the "Verification" tab for confidence scores
+                    - Smart mode provides more thorough research
+                    - Fast mode is quicker but less comprehensive
                     
                     ### API Key
                     
@@ -324,12 +365,89 @@ def create_interface():
                     """
                 )
         
-        # Connect the research button
-        # Use async generator with hardened client and retry logic
-        research_btn.click(
-            fn=run_research_stream,
-            inputs=[topic_input, num_sources, provider, strict_verify, use_sdk_planner],
-            outputs=[report_display, sources_table, verification_display, status_display]
+        # Generate plan button
+        async def handle_generate_plan(topic, num_searches, num_sources, mode):
+            """Handle plan generation and show editing UI."""
+            queries, thoughts, status = await generate_plan_async(topic, num_searches, num_sources, mode)
+            
+            # Convert queries list to dataframe format (list of lists)
+            queries_df = [[q] for q in queries] if queries else []
+            
+            return (
+                gr.update(visible=True),  # Show plan section
+                queries_df,  # Query inputs
+                thoughts,  # Planning thoughts
+                status,  # Status
+                {"queries": queries, "topic": topic, "thoughts": thoughts}  # State
+            )
+        
+        generate_plan_btn.click(
+            fn=handle_generate_plan,   
+            inputs=[topic_input, num_searches, num_sources, mode],
+            outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
+        )
+        
+        # Approve button - start research with edited queries
+        def extract_queries_from_df(queries_df):
+            """Extract queries from dataframe format."""
+            if not queries_df:
+                return []
+            # queries_df is list of lists: [[query1], [query2], ...]
+            queries = [row[0] if row and len(row) > 0 and row[0] else "" for row in queries_df]
+            # Filter out empty queries
+            return [q.strip() for q in queries if q and q.strip()]
+        
+        async def start_research_with_queries(topic, queries_df, num_searches, num_sources, max_waves, mode, show_outline):
+            """Extract queries and start research."""
+            queries = extract_queries_from_df(queries_df)
+            
+            # Empty queries guard - show friendly error
+            if not queries:
+                yield ("", [], "❌ Please provide at least one search query. All queries are empty.", gr.update(visible=False))
+                return
+            
+            # Cap queries to num_searches if user provided more
+            original_count = len(queries)
+            if len(queries) > num_searches:
+                queries = queries[:num_searches]
+                status_msg = f"ℹ️ Using first {num_searches} of {original_count} edited queries.\n\n"
+            else:
+                status_msg = ""
+            
+            # Start research with (possibly capped) queries
+            first_yield = True
+            async for result in run_research_stream(topic, queries, num_searches, num_sources, max_waves, mode, show_outline):
+                # Prepend status message to first status update if queries were capped
+                if first_yield and status_msg:
+                    report_md, sources_data, status, outline_update = result
+                    if status:
+                        status = status_msg + status
+                    yield (report_md, sources_data, status, outline_update)
+                    first_yield = False
+                else:
+                    yield result
+                    first_yield = False
+        
+        approve_btn.click(
+            fn=start_research_with_queries,
+            inputs=[topic_input, query_inputs, num_searches, num_sources, max_waves, mode, show_outline],
+            outputs=[report_display, sources_table, live_log, outline_md]
+        )
+        
+        # Skip button - start research with original queries from state
+        async def use_original_queries_and_start(state, topic, num_searches, num_sources, max_waves, mode, show_outline):
+            """Use original queries from state and start research."""
+            if state and "queries" in state:
+                queries = state["queries"]
+            else:
+                queries = []
+            async for result in run_research_stream(topic, queries, num_searches, num_sources, max_waves, mode, show_outline):
+                yield result
+        
+        skip_btn.click(
+            fn=use_original_queries_and_start,
+            inputs=[plan_state, topic_input, num_searches, num_sources, max_waves, mode, show_outline],
+            outputs=[report_display, sources_table, live_log, outline_md]
         )
         
         # Example topics
@@ -344,7 +462,7 @@ def create_interface():
         
         with gr.Row():
             for topic in example_topics:
-                btn = gr.Button(topic, size="sm")
+                btn = gr.Button(topic)
                 btn.click(
                     fn=lambda t=topic: t,
                     outputs=[topic_input]

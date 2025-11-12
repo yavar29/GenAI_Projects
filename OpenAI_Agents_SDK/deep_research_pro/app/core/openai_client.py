@@ -18,7 +18,7 @@ def make_async_client() -> AsyncOpenAI:
     transport = httpx.AsyncHTTPTransport(retries=3)
     
     http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=15.0, read=60.0, write=60.0, pool=60.0),
+        timeout=httpx.Timeout(connect=15.0, read=300.0, write=300.0, pool=60.0),  # Extended read/write for long reports
         transport=transport,
         verify=certifi.where(),
         proxies=None,

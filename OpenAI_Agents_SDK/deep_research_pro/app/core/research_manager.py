@@ -110,7 +110,6 @@ class ResearchManager:
     def __init__(
         self,
         openai_client: Optional[AsyncOpenAI] = None,
-        mode: str = "Smart",
         num_searches: int = 5,
         num_sources: int = 8,
         max_waves: int = MAX_WAVES,
@@ -120,13 +119,11 @@ class ResearchManager:
         
         Args:
             openai_client: Hardened OpenAI client (creates one if not provided)
-            mode: "Smart" (LLM planning) or "Fast" (heuristic planning) - kept for compatibility
             num_searches: Number of search queries to perform (default: 5) - kept for compatibility
             num_sources: Maximum number of sources to return (default: 8)
             max_waves: Maximum number of research waves (default: 3)
         """
         self.openai_client = openai_client or make_async_client()
-        self.mode = mode
         self.num_searches = num_searches
         self.num_sources = num_sources
         self.max_waves = max_waves
@@ -303,14 +300,16 @@ class ResearchManager:
                 status.append("✍️ Writing research report...")
                 yield ("", [], "\n\n".join(status))
                 
-                report = await self._write_report(query, source_index, all_summaries, query_level_summaries)
+                # Generate report
+                report = await self._write_report(
+                    query, source_index, all_summaries, query_level_summaries
+                )
                 status.append(f"✅ Generated report with {len(report.sections)} sections")
-                yield ("", [], "\n\n".join(status))
-                
-                # Render results with Source Index for deterministic citations
                 id_to_source = {item.id: item for item in sorted(source_index.values(), key=lambda x: x.id)}
                 md = render_markdown(report, source_index=id_to_source)
+                yield (md, [], "\n\n".join(status))
                 
+                # Build sources_data for final yield
                 sources_data = []
                 for item in sorted(source_index.values(), key=lambda x: x.id):
                     # Safely truncate title (handle None/empty)
@@ -321,6 +320,7 @@ class ResearchManager:
                     sources_data.append([title, item.url, source_type, item.date or "N/A"])
                 
                 status.append("✅ Complete!")
+                # Final yield with sources_data
                 yield (md, sources_data, "\n\n".join(status))
         
         except Exception as e:
@@ -515,13 +515,30 @@ class ResearchManager:
     def _join_findings(self, query: str, source_index: Dict[str, SourceItem], summaries: List[SearchResult]) -> str:
         """
         Build findings text for follow-up decision agent.
-        Format: Query + numbered list of Title/URL/Summary.
+        Includes top 10 summaries and a section describing what has NOT been found yet.
         """
-        text = f"Query: {query}\n\nSearch Results:\n"
-        # Sort summaries by ID for consistent ordering
-        sorted_summaries = sorted(summaries, key=lambda x: x.id)
+        text = f"Query: {query}\n\n"
+        
+        # Top 10 summaries (ID, Title, Summary)
+        text += "Top 10 Summaries:\n"
+        sorted_summaries = sorted(summaries, key=lambda x: x.id)[:10]
         for result in sorted_summaries:
-            text += f"\n{result.id}. Title: {result.title}\n   URL: {result.url}\n   Summary: {result.summary}\n"
+            text += f"\n{result.id}. Title: {result.title}\n   Summary: {result.summary}\n"
+        
+        # Section describing what has NOT been found yet (empty sections)
+        text += "\n\nWhat Has NOT Been Found Yet:\n"
+        text += "- Missing data or statistics\n"
+        text += "- Conflicting sources or viewpoints\n"
+        text += "- Unexplored angles or perspectives\n"
+        text += "- Case studies or real-world examples\n"
+        text += "- Technical depth or detailed explanations\n"
+        text += "- Trends or future implications\n"
+        text += "- Expert opinions or authoritative sources\n"
+        text += "- Historical context or evolution\n"
+        text += "- Comparisons with alternatives\n"
+        text += "- Risks, limitations, or controversies\n"
+        text += "\n(Note: The above list represents potential gaps. Evaluate which of these are actually missing based on the summaries above.)\n"
+        
         return text
     
     async def _write_report(self, query: str, source_index: Dict[str, SourceItem], summaries: List[SearchResult], query_level_summaries: List[str]) -> ResearchReport:
@@ -601,4 +618,3 @@ class ResearchManager:
         
         return report
     
-

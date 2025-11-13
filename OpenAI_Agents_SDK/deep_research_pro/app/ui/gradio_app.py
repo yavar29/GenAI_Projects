@@ -20,7 +20,7 @@ if OPENAI_API_KEY and not os.environ.get("OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 
-async def generate_plan_async(topic: str, num_searches: int, num_sources: int, mode: str):
+async def generate_plan_async(topic: str, num_searches: int, num_sources: int):
     """
     Generate search plan (queries) for user review.
     
@@ -33,7 +33,6 @@ async def generate_plan_async(topic: str, num_searches: int, num_sources: int, m
     try:
         manager = ResearchManager(
             openai_client=make_async_client(),
-            mode=mode,
             num_searches=num_searches,
             num_sources=num_sources
         )
@@ -44,6 +43,9 @@ async def generate_plan_async(topic: str, num_searches: int, num_sources: int, m
         queries_list = query_response.queries if query_response.queries else []
         thoughts = query_response.thoughts or "No thoughts provided."
         status = f"✅ Generated {len(queries_list)} search queries. Review and edit them below, then click 'Approve & Start Research'."
+        
+        # Truncate status message
+        status = _truncate_message(status, max_chars=4000)
         
         return (queries_list, thoughts, status)
     except Exception as e:
@@ -67,7 +69,6 @@ async def run_research_stream(
     num_searches: int,
     num_sources: int,
     max_waves: int,
-    mode: str,
     show_outline: bool,
 ):
     """
@@ -80,8 +81,6 @@ async def run_research_stream(
         num_searches: Number of search queries to perform
         num_sources: Maximum number of sources to return
         max_waves: Maximum number of research waves
-        mode: "Smart" (default) = LLM planning + deep search
-              "Fast" = heuristic planning + shallow search
         show_outline: Whether to show outline preview
     """
     # Filter out empty queries
@@ -94,14 +93,13 @@ async def run_research_stream(
     # Create ResearchManager with settings
     manager = ResearchManager(
         openai_client=make_async_client(),
-        mode=mode,
         num_searches=num_searches,
         num_sources=num_sources,
         max_waves=max_waves
     )
     
-    # Show mode/waves/sources in first log line
-    first_status = f"Mode: {mode} | Max Waves: {max_waves} | Max Sources: {num_sources}\n\n"
+    # Show waves/sources in first log line
+    first_status = f"Max Waves: {max_waves} | Max Sources: {num_sources}\n\n"
     
     # Delegate to ResearchManager with approved queries
     async for result in manager.run(topic, approved_queries=queries):
@@ -112,28 +110,32 @@ async def run_research_stream(
             status_text = first_status + status_text
             first_status = None
         
-        # Status text already has double line breaks from ResearchManager for better spacing
-        # Add auto-scroll anchor
-        status_text += "\n\n<div id=\"end\"></div>"
+        # Trim log to prevent excessive growth
+        status_text = _truncate_message(status_text, max_chars=8000)
+        status_text = _trim_log(status_text, max_lines=400)
+        
+        # Add auto-scroll anchor (best effort)
+        status_text += '\n\n<a href="#end"> </a><div id="end"></div>'
         
         # Extract outline from report if available and show_outline is True
         outline_update = gr.update(visible=False)
         if show_outline and report_md:
-            # Try to extract outline from report markdown
+            # Robust outline extraction - handles variations in heading format
             lines = report_md.split("\n")
-            outline_lines = []
-            in_outline = False
+            outline_lines, in_outline = [], False
             for line in lines:
-                if line.strip().startswith("## Outline"):
+                h2 = line.strip().lower().startswith("## ")
+                if h2 and "outline" in line.strip().lower():
                     in_outline = True
                     outline_lines.append(line)
-                elif in_outline:
-                    if line.strip().startswith("##") and not line.strip().startswith("## Outline"):
+                    continue
+                if in_outline:
+                    if h2 and "outline" not in line.strip().lower():
                         break
-                    if line.strip().startswith("-") or line.strip().startswith("*"):
+                    if line.strip().startswith(("-", "*")) or line.strip() == "":
                         outline_lines.append(line)
             if outline_lines:
-                outline_text = "\n".join(outline_lines)
+                outline_text = "\n".join(outline_lines).strip()
                 outline_update = gr.update(value=outline_text, visible=True)
         
         yield (report_md, sources_data, status_text, outline_update)
@@ -174,21 +176,29 @@ def create_interface():
         #live-log * {
             color: #111827 !important;
         }
-        #live-log pre, #live-log code {
-            color: #111827 !important;
-            background: transparent;
+        .report-markdown a[href] {
+            display: inline-block;
+            padding: 2px 6px;
+            margin: 0 2px;
+            background-color: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 3px;
+            color: #1976d2;
+            text-decoration: none;
+            font-size: 0.9em;
+            font-weight: 500;
         }
-        #live-log p {
-            color: #111827 !important;
-            margin: 0.5em 0;
+        .report-markdown a[href]:hover {
+            background-color: #bbdefb;
+            border-color: #1976d2;
         }
         """
     ) as demo:
         gr.Markdown(
             f"""
-                # 🔬 {PROJECT_NAME}
+            # 🔬 {PROJECT_NAME}
                 ### AI-Powered Research Assistant
-
+            
                 Enter a research topic below and get a comprehensive research report with citations.
             """
         )
@@ -203,12 +213,6 @@ def create_interface():
                 )
                 
                 with gr.Accordion("Advanced Options", open=False):
-                    mode = gr.Radio(
-                        choices=["Smart", "Fast"],
-                        value="Smart",
-                        label="Mode",
-                        info="Smart: LLM planning + deep search | Fast: heuristic planning + shallow search"
-                    )
                     
                     num_searches = gr.Slider(
                         minimum=3,
@@ -293,29 +297,52 @@ def create_interface():
             with gr.Tab("📄 Report"):
                 report_display = gr.Markdown(
                     label="Research Report",
-                    value="# Your research report will appear here...\n\nClick 'Start Research' to begin."
+                    value="# Your research report will appear here...\n\nClick 'Start Research' to begin.",
+                    elem_classes=["report-markdown"]
                 )
                 
                 with gr.Row():
                     export_md_btn = gr.Button("💾 Export Markdown")
-                    export_md_file = gr.File(label="Download", visible=False)
-                    
-                    def export_markdown(md: str):
-                        if not md or md.startswith("# Your research report"):
-                            return gr.File(visible=False)
-                        try:
-                            path = Path("data/exported_report.md")
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_text(md, encoding="utf-8")
-                            return gr.File(value=str(path.resolve()), visible=True)
-                        except Exception:
-                            return gr.File(visible=False)
-                    
-                    export_md_btn.click(
-                        fn=export_markdown,
-                        inputs=[report_display],
-                        outputs=[export_md_file]
-                    )
+                    export_html_btn = gr.Button("🌐 Export HTML")
+                
+                export_md_file = gr.File(label="Download Markdown", visible=False)
+                export_html_file = gr.File(label="Download HTML", visible=False)
+                
+                def export_markdown(md_text: str):
+                    if not md_text or md_text.startswith("# Your research report"):
+                        return gr.File(visible=False)
+                    try:
+                        path = Path("data/exported_report.md")
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(md_text, encoding="utf-8")
+                        return gr.File(value=str(path.resolve()), visible=True)
+                    except Exception:
+                        return gr.File(visible=False)
+                
+                def export_html(md_text: str):
+                    if not md_text or md_text.startswith("# Your research report"):
+                        return gr.File(visible=False)
+                    try:
+                        from app.core.render import render_html_from_markdown
+                        html = render_html_from_markdown(md_text)
+                        path = Path("data/exported_report.html")
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(html, encoding="utf-8")
+                        return gr.File(value=str(path.resolve()), visible=True)
+                    except Exception:
+                        return gr.File(visible=False)
+                
+                export_md_btn.click(
+                    fn=export_markdown,
+                    inputs=[report_display],
+                    outputs=[export_md_file]
+                )
+                
+                export_html_btn.click(
+                    fn=export_html,
+                    inputs=[report_display],
+                    outputs=[export_html_file]
+                )
             
             with gr.Tab("📚 Sources"):
                 sources_table = gr.Dataframe(
@@ -348,16 +375,10 @@ def create_interface():
                     2. **Search**: Searches the web in parallel for relevant sources
                     3. **Writing**: Generates a structured research report with citations
                     
-                    ### Modes
-                    
-                    - **Smart Mode** (default): Uses LLM planning and deep search for highest quality results
-                    - **Fast Mode**: Uses heuristic planning and shallow search for quick results
-                    
                     ### Tips
                     
                     - Use specific topics for better results
-                    - Smart mode provides more thorough research
-                    - Fast mode is quicker but less comprehensive
+                    - The system uses LLM planning and deep search for high-quality research
                     
                     ### API Key
                     
@@ -366,9 +387,9 @@ def create_interface():
                 )
         
         # Generate plan button
-        async def handle_generate_plan(topic, num_searches, num_sources, mode):
+        async def handle_generate_plan(topic, num_searches, num_sources):
             """Handle plan generation and show editing UI."""
-            queries, thoughts, status = await generate_plan_async(topic, num_searches, num_sources, mode)
+            queries, thoughts, status = await generate_plan_async(topic, num_searches, num_sources)
             
             # Convert queries list to dataframe format (list of lists)
             queries_df = [[q] for q in queries] if queries else []
@@ -383,7 +404,7 @@ def create_interface():
         
         generate_plan_btn.click(
             fn=handle_generate_plan,   
-            inputs=[topic_input, num_searches, num_sources, mode],
+            inputs=[topic_input, num_searches, num_sources],
             outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
         )
         
@@ -397,7 +418,7 @@ def create_interface():
             # Filter out empty queries
             return [q.strip() for q in queries if q and q.strip()]
         
-        async def start_research_with_queries(topic, queries_df, num_searches, num_sources, max_waves, mode, show_outline):
+        async def start_research_with_queries(topic, queries_df, num_searches, num_sources, max_waves, show_outline):
             """Extract queries and start research."""
             queries = extract_queries_from_df(queries_df)
             
@@ -416,7 +437,7 @@ def create_interface():
             
             # Start research with (possibly capped) queries
             first_yield = True
-            async for result in run_research_stream(topic, queries, num_searches, num_sources, max_waves, mode, show_outline):
+            async for result in run_research_stream(topic, queries, num_searches, num_sources, max_waves, show_outline):
                 # Prepend status message to first status update if queries were capped
                 if first_yield and status_msg:
                     report_md, sources_data, status, outline_update = result
@@ -430,23 +451,34 @@ def create_interface():
         
         approve_btn.click(
             fn=start_research_with_queries,
-            inputs=[topic_input, query_inputs, num_searches, num_sources, max_waves, mode, show_outline],
+            inputs=[topic_input, query_inputs, num_searches, num_sources, max_waves, show_outline],
             outputs=[report_display, sources_table, live_log, outline_md]
         )
         
         # Skip button - start research with original queries from state
-        async def use_original_queries_and_start(state, topic, num_searches, num_sources, max_waves, mode, show_outline):
+        async def use_original_queries_and_start(state, topic, num_searches, num_sources, max_waves, show_outline):
             """Use original queries from state and start research."""
-            if state and "queries" in state:
-                queries = state["queries"]
+            queries = (state.get("queries") if state and "queries" in state else []) or []
+            
+            # Cap queries to num_searches (defensive)
+            if len(queries) > num_searches:
+                queries = queries[:num_searches]
+                preface = f"ℹ️ Using first {num_searches} saved queries.\n\n"
             else:
-                queries = []
-            async for result in run_research_stream(topic, queries, num_searches, num_sources, max_waves, mode, show_outline):
-                yield result
+                preface = ""
+            
+            first_yield = True
+            async for result in run_research_stream(topic, queries, num_searches, num_sources, max_waves, show_outline):
+                report_md, sources_data, status_text, outline_update = result
+                if first_yield and preface:
+                    status_text = preface + status_text
+                    preface = ""
+                yield (report_md, sources_data, status_text, outline_update)
+                first_yield = False
         
         skip_btn.click(
             fn=use_original_queries_and_start,
-            inputs=[plan_state, topic_input, num_searches, num_sources, max_waves, mode, show_outline],
+            inputs=[plan_state, topic_input, num_searches, num_sources, max_waves, show_outline],
             outputs=[report_display, sources_table, live_log, outline_md]
         )
         

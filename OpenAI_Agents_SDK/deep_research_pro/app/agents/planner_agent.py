@@ -1,85 +1,82 @@
 from __future__ import annotations
 from typing import List, Optional
-import os
 from agents import Agent, Runner, ModelSettings
-from app.schemas.plan import ResearchPlan
+from app.schemas.plan import QueryResponse, FollowUpDecisionResponse
 from openai import AsyncOpenAI
 
-HOW_MANY_SEARCHES = 5
-
-class PlannerAgent:
+class QueryGeneratorAgent:
     """
-    Research planner with two modes:
-    - Heuristic (default): Fast, free, predictable planning
-    - SDK (optional): LLM-powered, adaptive planning
+    Query Generator Agent: Given a user query, generates 5-7 diverse search queries.
+    Similar to reference query_agent.py.
     """
-    def __init__(self, use_sdk: bool = False, model: str = "gpt-4o-mini", openai_client: Optional[AsyncOpenAI] = None):
-        self.use_sdk = use_sdk
-        # If client provided, ensure it's available to the SDK via environment
+    def __init__(self, model: str = "gpt-4o", openai_client: Optional[AsyncOpenAI] = None):
         if openai_client:
-            # The SDK reads from environment, so we ensure the API key is set
-            # The client itself will be used by the SDK internally
+            # SDK reads from environment
             pass
-        if use_sdk:
-            self.agent = Agent(
-                name="Planner",
-                instructions=(
-                    "Create a strategic research plan for the given topic:\n"
-                    "- 3–5 subtopics covering key aspects\n"
-                    "- 6–10 high-coverage search queries (diverse domains: gov, edu, news, academic)\n"
-                    "- Include constraints for source quality and recency\n"
-                    "- Return strictly the JSON payload matching ResearchPlan."
-                ),
-                model=model,
-                model_settings=ModelSettings(temperature=0.2),
-                output_type=ResearchPlan,
-            )
-        else:
-            self.agent = None
+        self.agent = Agent(
+            name="QueryGenerator",
+            instructions=(
+                "You are a research planning specialist.\n\n"
+                "Given a user query, generate **5–7 diverse search queries** that explore:\n"
+                "- definitions & background\n"
+                "- statistics & data\n"
+                "- trends\n"
+                "- case studies\n"
+                "- industry adoption\n"
+                "- risks & limitations\n"
+                "- expert opinions\n"
+                "- historical evolution\n"
+                "- comparisons with alternatives\n\n"
+                "Before listing the queries, think step-by-step about:\n"
+                "- what aspects of the topic need investigation\n"
+                "- what information is still missing\n"
+                "- which angles provide the deepest insight\n\n"
+                "Output exactly 5–7 queries."
+            ),
+            model=model,
+            model_settings=ModelSettings(temperature=0.2),
+            output_type=QueryResponse,
+        )
 
-    def plan(self, topic: str) -> ResearchPlan:
-        """Sync planning - uses heuristic by default, SDK if use_sdk=True."""
-        if self.use_sdk:
-            result = Runner.run_sync(self.agent, f"Topic: {topic}")
-            return result.final_output_as(ResearchPlan)
-        return self._plan_heuristic(topic)
+    async def generate_async(self, query: str) -> QueryResponse:
+        """Generate search queries for the given query."""
+        result = await Runner.run(self.agent, input=query)
+        return result.final_output_as(QueryResponse)
 
-    async def plan_async(self, topic: str) -> ResearchPlan:
-        """Async planning - uses SDK if use_sdk=True, otherwise heuristic."""
-        if self.use_sdk:
-            result = await Runner.run(self.agent, f"Topic: {topic}")
-            return result.final_output_as(ResearchPlan)
-        return self._plan_heuristic(topic)
 
-    def _plan_heuristic(self, topic: str) -> ResearchPlan:
-        """Heuristic-based planning (fast, free, predictable)."""
-        topic = topic.strip()
-        # Simple subtopic expansion (can be LLM-powered later)
-        subtopics: List[str] = [
-            f"{topic} — background",
-            f"{topic} — recent developments",
-            f"{topic} — key players",
-            f"{topic} — risks & challenges",
-        ][:4]
+class FollowUpDecisionAgent:
+    """
+    Follow-Up Decision Agent: Decides if more research is needed and generates follow-up queries.
+    Similar to reference follow_up_agent.py.
+    """
+    def __init__(self, model: str = "gpt-4o", openai_client: Optional[AsyncOpenAI] = None):
+        if openai_client:
+            # SDK reads from environment
+            pass
+        self.agent = Agent(
+            name="FollowUpDecision",
+            instructions=(
+                "You analyze current findings and decide if additional research waves are needed.\n\n"
+                "Trigger follow-up queries if:\n"
+                "- Data or statistics are missing\n"
+                "- There are conflicting sources\n"
+                "- The topic has unexplored angles\n"
+                "- Case studies are missing\n"
+                "- Technical depth is insufficient\n"
+                "- Trends or future implications are missing\n\n"
+                "If follow-up is needed:\n"
+                "Generate 2–4 targeted follow-up queries addressing the exact gaps.\n\n"
+                "If not:\n"
+                "Set should_follow_up=False.\n\n"
+                "Always provide detailed reasoning."
+            ),
+            model=model,
+            model_settings=ModelSettings(temperature=0.2),
+            output_type=FollowUpDecisionResponse,
+        )
 
-        # Derive concrete queries from subtopics
-        queries: List[str] = []
-        for s in subtopics:
-            base = s.replace(" — ", " ")
-            queries.extend([
-                f"{base} 2024 site:reputable news",
-                f"{base} report pdf",
-            ])
-        # De-duplicate while preserving order
-        seen = set()
-        queries = [q for q in queries if not (q in seen or seen.add(q))]
-        
-        # Limit to HOW_MANY_SEARCHES (matching old deep_research behavior)
-        queries = queries[:HOW_MANY_SEARCHES]
-
-        constraints = [
-            "Prefer reputable sources with clear authorship",
-            "Collect publication date when available",
-        ]
-
-        return ResearchPlan(topic=topic, subtopics=subtopics, queries=queries, constraints=constraints)
+    async def decide_async(self, original_query: str, findings_text: str) -> FollowUpDecisionResponse:
+        """Decide if follow-up research is needed."""
+        prompt = f"Original Query: {original_query}\n\nCurrent Findings:\n{findings_text}"
+        result = await Runner.run(self.agent, input=prompt)
+        return result.final_output_as(FollowUpDecisionResponse)

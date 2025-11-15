@@ -7,12 +7,9 @@ from openai import AsyncOpenAI
 class QueryGeneratorAgent:
     """
     Query Generator Agent: Given a user query, generates 5-7 diverse search queries.
-    Similar to reference query_agent.py.
     """
     def __init__(self, model: str = "gpt-4o", openai_client: Optional[AsyncOpenAI] = None):
-        if openai_client:
-            # SDK reads from environment
-            pass
+        _ = openai_client
         self.agent = Agent(
             name="QueryGenerator",
             instructions=(
@@ -45,10 +42,7 @@ class QueryGeneratorAgent:
 
 
 class FollowUpDecisionAgent:
-    """
-    Follow-Up Decision Agent: Decides if more research is needed and generates follow-up queries.
-    Similar to reference follow_up_agent.py.
-    """
+    """Decides if additional research waves are needed and generates follow-up queries."""
     def __init__(self, model: str = "gpt-4o", openai_client: Optional[AsyncOpenAI] = None):
         if openai_client:
             # SDK reads from environment

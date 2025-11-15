@@ -1,620 +1,865 @@
 """
-ResearchManager: Orchestrates the multi-wave research pipeline.
-Similar to reference coordinator.py with Query Generator and Follow-Up Decision.
+ResearchManager: Orchestrates the entire Deep Research pipeline.
+
+This module contains the main ResearchManager class that coordinates all agents and manages
+the complete research workflow from user query to final report.
+
+Pipeline Overview:
+1. Planning: QueryGeneratorAgent creates diverse search queries
+2. File Processing (optional): FileSummarizerAgent processes uploaded documents in parallel
+3. Research Waves: Iterative web search with parallel processing
+   - Each wave: parallel queries → parallel result summarization → deduplication
+   - FollowUpDecisionAgent determines if more waves needed
+4. Report Generation: WriterAgent synthesizes sources into structured report
+   - Source filtering and deduplication
+   - Subtopic theme extraction
+   - Cross-source synthesis
+   - Output validation and retry logic
+
+Key Features:
+- Parallel processing for file chunks, queries, and result summarization
+- Two-level caching (L1: in-memory, L2: SQLite) with TTL and LRU
+- Multi-wave research with intelligent follow-up queries
+- Structured output validation with automatic retry
+- Analytics tracking for efficiency metrics
 """
 
-from __future__ import annotations
-from typing import List, Optional, AsyncIterator, Tuple, Dict
-from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
-import asyncio
-import sqlite3
-import json
-import time
 import os
-from agents import trace, gen_trace_id
-from openai import AsyncOpenAI
+import asyncio
+import traceback
+import time
 
-from app.core.tracing import TRACE_DASHBOARD
-from app.core.openai_client import make_async_client
-from app.core.settings import OPENAI_API_KEY
-from app.tools.hosted_tools import get_search_provider_async
+import re
+from typing import Dict, List, AsyncGenerator, Optional, Tuple
+from pathlib import Path
+
+from openai import AsyncOpenAI
+from agents import trace, gen_trace_id
+
 from app.agents.planner_agent import QueryGeneratorAgent, FollowUpDecisionAgent
 from app.agents.search_agent import SearchAgent
 from app.agents.writer_agent import WriterAgent
+from app.agents.file_summarizer_agent import FileSummarizerAgent
+
+from app.schemas.source import SourceDoc, SourceItem
 from app.schemas.plan import QueryResponse, FollowUpDecisionResponse
 from app.schemas.report import ResearchReport
-from app.schemas.source import SourceItem, SourceDoc, SearchResult
+from app.core.settings import (
+    MAX_UPLOAD_FILES,
+    SUPPORTED_FILE_TYPES,
+    UPLOAD_DIR,
+    OPENAI_API_KEY,
+)
+from app.core.tracing import TRACE_DASHBOARD
+from app.core.openai_client import make_async_client
+from app.tools.hosted_tools import get_search_provider_async
 from app.core.render import render_markdown
+from app.schemas.analytics import EfficiencyMetrics, WaveStat
+from app.core.analytics_builder import build_analytics_payload
+from app.core.cache_manager import get_cache_manager
 
 # Configuration constants
-MAX_WAVES = 3  # Maximum number of research waves (Wave 1 + up to 2 follow-ups)
-TOPK_PER_QUERY = 5  # Top results per query from WebSearchTool
-MAX_SOURCES_FINAL = 20  # Maximum total sources across all waves
-
-# Concurrency guardrails (safe defaults for HF Spaces)
-SEARCH_CONCURRENCY = 5
-SUMMARY_CONCURRENCY = 5
-
-# Disk cache configuration
-CACHE_TTL_SECONDS = 24 * 3600  # 24h
-CACHE_MAX_ROWS = 1000  # cap on-disk cache
-CACHE_DB_PATH = os.path.join("data", "search_cache_v1.sqlite")
-CACHE_VERSION_SALT = "hosted-v1-topk5"  # change when semantics/config change
-
-
-def _ensure_cache_db(path: str):
-    """Initialize SQLite cache database and return connection."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS qcache (
-            k TEXT PRIMARY KEY,
-            v TEXT NOT NULL,
-            ts INTEGER NOT NULL
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS qcache_ts_idx ON qcache(ts)")
-    conn.commit()
-    return conn
-
-
-def _cache_key(norm_q: str) -> str:
-    """Generate cache key with version salt."""
-    # include salt so changing TOPK, provider, or schema invalidates old rows
-    return f"{CACHE_VERSION_SALT}|{norm_q}"
-
-
-def _cache_get_disk(conn, norm_q: str):
-    """Get cached value from disk (L2 cache). Returns None if miss or expired."""
-    k = _cache_key(norm_q)
-    row = conn.execute("SELECT v, ts FROM qcache WHERE k=?", (k,)).fetchone()
-    if not row:
-        return None
-    v_json, ts = row
-    if (time.time() - ts) > CACHE_TTL_SECONDS:
-        # expired; best-effort purge
-        conn.execute("DELETE FROM qcache WHERE k=?", (k,))
-        conn.commit()
-        return None
-    try:
-        return json.loads(v_json)
-    except Exception:
-        return None
-
-
-def _cache_set_disk(conn, norm_q: str, payload: dict):
-    """Store value in disk cache (L2 cache) with size cap."""
-    k = _cache_key(norm_q)
-    v_json = json.dumps(payload, ensure_ascii=False)
-    now = int(time.time())
-    conn.execute("INSERT OR REPLACE INTO qcache(k, v, ts) VALUES(?,?,?)", (k, v_json, now))
-    # naive size cap
-    conn.execute("""
-        DELETE FROM qcache WHERE k IN (
-            SELECT k FROM qcache ORDER BY ts ASC LIMIT
-            CASE WHEN (SELECT COUNT(*) FROM qcache) > ? THEN (SELECT COUNT(*) - ?) ELSE 0 END
-        )
-    """, (CACHE_MAX_ROWS, CACHE_MAX_ROWS))
-    conn.commit()
-
+MAX_WAVES = 3
+TOPK_PER_QUERY = 5
+MAX_SOURCES_FINAL = 25
 
 class ResearchManager:
-    """
-    Orchestrates the multi-wave research pipeline:
-    - Wave 1: Query Generator → Search → Summarize each result
-    - Follow-up waves: Follow-up Decision → Search → Summarize new results
-    - Synthesis: Format findings → Writer
-    Uses async generator pattern to yield status updates throughout the process.
-    """
-    
+    """Orchestrates research pipeline: planning, search, file processing, follow-up, writing."""
+
     def __init__(
         self,
-        openai_client: Optional[AsyncOpenAI] = None,
-        num_searches: int = 5,
-        num_sources: int = 8,
-        max_waves: int = MAX_WAVES,
+        client: Optional[AsyncOpenAI] = None,
+        max_sources: int = 25,
+        max_waves: int = 2,
+        topk_per_query: int = 5,
+        num_searches: int = 5,  # For backward compatibility
+        num_sources: int = 8,  # For backward compatibility
     ):
-        """
-        Initialize ResearchManager.
-        
-        Args:
-            openai_client: Hardened OpenAI client (creates one if not provided)
-            num_searches: Number of search queries to perform (default: 5) - kept for compatibility
-            num_sources: Maximum number of sources to return (default: 8)
-            max_waves: Maximum number of research waves (default: 3)
-        """
-        self.openai_client = openai_client or make_async_client()
+        self.client = client or make_async_client()
+        self.max_sources = max_sources
+        self.max_waves = max_waves
+        self.topk = topk_per_query
         self.num_searches = num_searches
         self.num_sources = num_sources
-        self.max_waves = max_waves
-        self.provider = "hosted"  # Always use hosted for real search
-        
+
         # Ensure API key is in environment for Agents SDK
         if OPENAI_API_KEY and not hasattr(self, '_api_key_set'):
             os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
             self._api_key_set = True
-        
-        # --- Caching & guardrails ---
-        # Cache: normalized_query -> (results_list, query_summary_or_None)
-        self._search_cache: Dict[str, Tuple[List[dict], Optional[str]]] = {}
-        
-        # Concurrency semaphores (tunable via constants above)
-        self._search_sem = asyncio.Semaphore(SEARCH_CONCURRENCY)
-        self._summary_sem = asyncio.Semaphore(SUMMARY_CONCURRENCY)
-        
-        # Simple counters for Live Log visibility
-        self._cache_hits = 0
-        self._cache_misses = 0
-        
-        # Disk cache (level-2)
-        self._disk_cache_conn = _ensure_cache_db(CACHE_DB_PATH)
+
+        # Agents
+        self.planner = QueryGeneratorAgent(openai_client=self.client)
+        self.search_agent = SearchAgent(openai_client=self.client)
+        self.followup_agent = FollowUpDecisionAgent(openai_client=self.client)
+        self.writer = WriterAgent(openai_client=self.client)
+        self.file_agent = FileSummarizerAgent(self.client)
+
+        # Caches
+        self.cache_manager = get_cache_manager()
+        self.source_index: Dict[str, SourceDoc] = {}
+
+        # Metrics for efficiency / analytics
+        self.metrics_queries_executed = 0
+        self.metrics_total_sources_seen = 0
+        self.metrics_cache_hits = 0
+        self.metrics_cache_misses = 0
+
+        # Ensure upload directory exists
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+        # Get search provider
+        self.web_search_async = get_search_provider_async("hosted")
+
+    # -----------------------------------------------------------
+    # UTILITIES
+    # -----------------------------------------------------------
+
+    def _norm_query(self, q: str) -> str:
+        """Normalize queries for caching."""
+        return q.lower().strip()
     
-    async def generate_plan(self, query: str) -> QueryResponse:
+    def _normalize_url(self, url: str) -> str:
+        """Normalize and fix malformed URLs.
+        
+        Fixes common URL issues:
+        - Removes angle brackets
+        - Adds https:// if protocol missing
+        - Handles relative URLs
         """
-        Generate initial search plan (queries) for user review.
+        if not url:
+            return ""
+        
+        # Remove angle brackets
+        url = url.strip('<>').strip()
+        
+        # If already a valid URL, return as-is
+        if url.startswith(('http://', 'https://')):
+            return url
+        
+        # If relative URL, return as-is (will be handled in render)
+        if url.startswith('/'):
+            return url
+        
+        # If looks like a domain (has dot and reasonable length), add https
+        if '.' in url and len(url) > 4 and not url.startswith('<'):
+            return f"https://{url}"
+        
+        # Otherwise return as-is (will be marked as invalid in render)
+        return url
+
+    def _merge_sources(self, new_sources: List[SourceDoc]):
+        """Merge sources into global index."""
+        for src in new_sources:
+            if src.url not in self.source_index:
+                self.source_index[src.url] = src
+    
+    def _deduplicate_sources(self, sources: List[SourceDoc]) -> List[SourceDoc]:
+        """Remove duplicate sources based on content similarity."""
+        seen_content = set()
+        filtered = []
+        for src in sources:
+            content = (src.content or src.snippet or "").strip()
+            if not content:
+                continue
+            # Use a hash of first 500 chars to detect near-duplicates
+            content_key = content[:500].lower()
+            if content_key not in seen_content:
+                seen_content.add(content_key)
+                filtered.append(src)
+        return filtered
+    
+    def _filter_top_sources(self, sources: List[SourceDoc], top_k: int = 15) -> List[SourceDoc]:
+        """Filter to top K unique sources, prioritizing those with richer content."""
+        unique_sources = self._deduplicate_sources(sources)
+        # Sort by content length (richer sources first), then take top K
+        sorted_sources = sorted(
+            unique_sources,
+            key=lambda s: len(s.content or s.snippet or ""),
+            reverse=True
+        )
+        return sorted_sources[:top_k]
+    
+    def _estimate_token_count(self, text: str) -> int:
+        """Estimate token count (rough approximation: ~4 chars per token for English)."""
+        try:
+            import tiktoken
+            encoding = tiktoken.encoding_for_model("gpt-4o")
+            return len(encoding.encode(text))
+        except ImportError:
+            # Fallback: rough estimate (4 chars per token)
+            return len(text) // 4
+    
+    def _extract_subtopics_from_topic(self, topic: str) -> List[str]:
+        """Extract subtopics from topic string when it enumerates multiple topics.
+        
+        Handles cases like:
+        - "Mars colonization, new propulsion systems, search for extraterrestrial life"
+        - "AI in healthcare: diagnostics, treatment, and ethics"
+        - "Future of space exploration: Focus on topics like X, Y, or Z"
         
         Args:
-            query: Research topic/query
-            
+            topic: The original research topic string
+        
         Returns:
-            QueryResponse with thoughts and queries
+            List of extracted subtopic strings, or empty list if none found
         """
-        query_gen = QueryGeneratorAgent(openai_client=self.openai_client)
-        return await query_gen.generate_async(query)
-    
-    async def run(self, query: str, approved_queries: Optional[List[str]] = None) -> AsyncIterator[Tuple[str, List, str]]:
-        """
-        Run the complete research pipeline.
-        Yields status updates and final results as tuples: (report_md, sources_data, status)
+        if not topic:
+            return []
+        
+        # Common separators that indicate multiple subtopics
+        separators = [",", ";", ":", "|", "or", "and"]
+        
+        # Look for patterns like "Focus on topics like X, Y, or Z"
+        focus_pattern = r"(?:focus on|topics? like|including|such as|e\.g\.|for example)[:\s]+(.+)"
+        match = re.search(focus_pattern, topic, re.IGNORECASE)
+        if match:
+            topic_part = match.group(1)
+            # Split by common separators
+            for sep in separators:
+                if sep in topic_part:
+                    parts = [p.strip() for p in topic_part.split(sep) if p.strip()]
+                    if len(parts) >= 2:
+                        # Clean up each part (remove leading articles, etc.)
+                        cleaned = []
+                        for p in parts:
+                            p = p.strip()
+                            # Remove leading "the", "a", "an" if present
+                            p = re.sub(r'^(the|a|an)\s+', '', p, flags=re.IGNORECASE)
+                            if len(p) > 10:  # Only keep substantial subtopics
+                                cleaned.append(p)
+                        if cleaned:
+                            return cleaned[:7]  # Max 7 subtopics
+        
+        # Try splitting by comma if topic contains multiple parts
+        if "," in topic:
+            parts = [p.strip() for p in topic.split(",") if p.strip()]
+            if len(parts) >= 2:
+                # Check if parts look like subtopics (not just a list of words)
+                cleaned = []
+                for p in parts:
+                    p = p.strip()
+                    # Skip if it's too short or looks like a single word
+                    if len(p) > 15 and " " in p:
+                        cleaned.append(p)
+                if len(cleaned) >= 2:
+                    return cleaned[:7]
+        
+        return []
+
+    def _extract_subtopic_themes(self, queries: List[str], topic: str = "") -> List[str]:
+        """Extract meaningful subtopic themes from queries for better report structure.
+        
+        Analyzes query text to identify common research angles and converts them into
+        structured theme names that guide the WriterAgent's report organization.
+        
+        Detected themes include:
+        - Background & Fundamentals
+        - Statistics & Data
+        - Future Trends & Outlook
+        - Case Studies & Examples
+        - Risks & Challenges
+        - Limitations & Constraints
+        - Comparisons & Alternatives
+        - Adoption & Implementation
+        - Benefits & Advantages
         
         Args:
-            query: Research topic/query
-            approved_queries: Optional list of pre-approved queries (if None, generates them)
-            
-        Yields:
-            Tuple of (report_markdown, sources_data, status_text)
-        """
-        if not query or not query.strip():
-            yield ("", [], "❌ Please enter a research topic")
-            return
+            queries: List of search query strings
+            topic: Original research topic (used as fallback if queries are empty/generic)
         
-        # Generate trace ID (like reference)
+        Returns:
+            List of theme names (top 5-7) sorted by frequency in queries
+        
+        Falls back to extracting from topic or query snippets if no themes are detected.
+        """
+        if not queries:
+            # If no queries, try extracting from topic itself
+            if topic:
+                topic_subtopics = self._extract_subtopics_from_topic(topic)
+                if topic_subtopics:
+                    return topic_subtopics
+            return []
+        
+        # Common theme keywords
+        theme_keywords = {
+            "background": ["background", "definition", "what is", "overview", "introduction", "basics", "fundamentals"],
+            "statistics": ["statistics", "data", "numbers", "percentage", "rate", "survey", "study", "research"],
+            "trends": ["trend", "future", "forecast", "prediction", "outlook", "emerging", "upcoming"],
+            "case_studies": ["case study", "example", "instance", "use case", "real-world", "implementation"],
+            "risks": ["risk", "danger", "threat", "challenge", "problem", "issue", "concern"],
+            "limitations": ["limitation", "drawback", "disadvantage", "weakness", "constraint"],
+            "comparison": ["compare", "versus", "vs", "difference", "alternative", "vs", "versus"],
+            "adoption": ["adoption", "implementation", "deployment", "usage", "adoption rate"],
+            "benefits": ["benefit", "advantage", "pro", "strength", "positive"],
+        }
+        
+        # Count theme matches per query
+        theme_counts = {theme: 0 for theme in theme_keywords.keys()}
+        
+        for query_lower in [q.lower() for q in queries]:
+            for theme, keywords in theme_keywords.items():
+                if any(keyword in query_lower for keyword in keywords):
+                    theme_counts[theme] += 1
+        
+        # Convert to readable subtopic names
+        theme_names = {
+            "background": "Background & Fundamentals",
+            "statistics": "Statistics & Data",
+            "trends": "Future Trends & Outlook",
+            "case_studies": "Case Studies & Examples",
+            "risks": "Risks & Challenges",
+            "limitations": "Limitations & Constraints",
+            "comparison": "Comparisons & Alternatives",
+            "adoption": "Adoption & Implementation",
+            "benefits": "Benefits & Advantages",
+        }
+        
+        # Get top themes (at least 2 matches or top 5)
+        sorted_themes = sorted(
+            [(theme, count) for theme, count in theme_counts.items() if count > 0],
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        # Return top 5-7 themes as subtopics
+        subtopics = [theme_names[theme] for theme, _ in sorted_themes[:7]]
+        
+        # If we don't have enough themes, use first few queries as fallback
+        if len(subtopics) < 3:
+            subtopics.extend([q[:60] for q in queries[:5] if q not in subtopics])
+            subtopics = subtopics[:7]
+        
+        return subtopics
+
+    # -----------------------------------------------------------
+    # FILE HANDLING
+    # -----------------------------------------------------------
+
+    async def process_uploaded_files(
+        self, filepaths: List[str], status_messages: List[str]
+    ) -> List[SourceDoc]:
+        """Process uploaded files in parallel: extract, chunk, summarize, merge.
+        
+        Handles PDF, DOCX, and TXT files. Each file is processed independently in parallel:
+        1. Text extraction (format-specific)
+        2. Semantic chunking (LLM-based section detection)
+        3. Parallel chunk summarization (all chunks processed concurrently)
+        4. Summary merging into single SourceDoc per file
+        
+        Args:
+            filepaths: List of file paths to process
+            status_messages: List to append status updates (modified in-place)
+        
+        Returns:
+            List of SourceDoc objects, one per successfully processed file
+        
+        Files with unsupported types or processing errors are skipped with error messages
+        added to status_messages.
+        """
+        if not filepaths:
+            return []
+
+        # Filter valid files first
+        valid_files = []
+        for fp in filepaths:
+            fname = os.path.basename(fp)
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in SUPPORTED_FILE_TYPES:
+                status_messages.append(f"❌ Unsupported file type: {fname}")
+                continue
+            valid_files.append(fp)
+            status_messages.append(f"📄 Processing file: {fname} (Semantic Chunking)")
+
+        if not valid_files:
+            return []
+
+        # Process all files in parallel
+        async def process_single_file(fp: str) -> Optional[SourceDoc]:
+            fname = os.path.basename(fp)
+            try:
+                summary_doc = await self.file_agent.process_file(fp)
+                status_messages.append(f"✅ Completed: {fname}")
+                return summary_doc
+            except Exception as e:
+                status_messages.append(f"❌ Error processing {fname}: {e}")
+                traceback.print_exc()
+                return None
+
+        # Launch all file processing tasks in parallel
+        file_tasks = [process_single_file(fp) for fp in valid_files]
+        results = await asyncio.gather(*file_tasks, return_exceptions=True)
+        
+        # Filter out None and exceptions
+        summaries = []
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            if result is not None:
+                summaries.append(result)
+
+        return summaries
+
+    # -----------------------------------------------------------
+    # WEB SEARCH + SUMMARIZATION
+    # -----------------------------------------------------------
+
+    async def _summarize_sources(
+        self, source_items: List[Tuple[SourceItem, Dict]]
+    ) -> List[SourceDoc]:
+        """Helper: Summarize a list of source items in parallel and return SourceDoc objects."""
+        if not source_items:
+            return []
+        
+        tasks = [self.search_agent.summarize_result_async(item[0]) for item in source_items]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        summarized = []
+        for (item, raw), summary in zip(source_items, results):
+            if isinstance(summary, Exception):
+                print(f"Warning: Failed to summarize result {item.title}: {summary}")
+                content = item.snippet or ""
+            else:
+                content = summary if summary else (item.snippet or "")
+            
+            # Normalize URL before creating SourceDoc
+            normalized_url = self._normalize_url(item.url)
+            
+            summarized.append(SourceDoc(
+                title=item.title,
+                url=normalized_url,
+                snippet=content[:350] if content else "",
+                content=content,
+                published=item.date,
+                source_type=raw.get("source_type", "web"),
+                provider=raw.get("provider", "openai"),
+            ))
+        
+        return summarized
+
+    async def run_web_search(
+        self, queries: List[str], status_messages: List[str]
+    ) -> Tuple[List[SourceDoc], List[str]]:
+        """Execute search pipeline: cache lookup, web search, summarization, deduplication.
+        
+        Processes all queries in parallel for maximum speed. For each query:
+        1. Check two-level cache (L1: in-memory, L2: SQLite)
+        2. If cache miss: Execute web search via WebSearchTool
+        3. Parallel summarization of all results for the query
+        4. Convert to SourceDoc objects with full summaries
+        
+        Args:
+            queries: List of search query strings to execute
+            status_messages: List to append status updates (modified in-place)
+        
+        Returns:
+            Tuple of (sources, query_summaries):
+            - sources: List of SourceDoc objects (deduplicated by URL)
+            - query_summaries: List of query-level summary strings for report context
+        
+        All queries are processed concurrently, and result summarization within each query
+        is also parallelized for optimal performance.
+        """
+        unique_sources = []
+        query_summaries = []
+
+        async def process_single_query(q: str) -> Tuple[List[SourceDoc], Optional[str]]:
+            """Process a single query and return (sources, query_summary)."""
+            nq = self._norm_query(q)
+            status_messages.append(f"🔍 Searching: {q}")
+
+            self.metrics_queries_executed += 1
+            query_summary = None
+
+            # Check cache (L1 + L2)
+            cached = self.cache_manager.get(nq)
+            if cached:
+                self.metrics_cache_hits += 1
+                status_messages.append(f"↪ Cache hit for query: {q}")
+                cached_results, cached_summary = cached
+                # Store query-level summary if available
+                if cached_summary:
+                    query_summary = f"Query: {q}\nSummary: {cached_summary}"
+                # Convert cached dicts to SourceItem tuples for summarization
+                # For cached results, we need to re-summarize to get full detailed summaries
+                results_to_process = cached_results[:self.topk]
+                
+                source_items = []
+                for r in results_to_process:
+                    source_item = SourceItem(
+                        id=0,
+                        title=r.get("title", ""),
+                        url=r.get("url", ""),
+                        snippet=r.get("snippet", ""),
+                        date=r.get("published"),
+                    )
+                    source_items.append((source_item, r))
+                
+                try:
+                    query_sources = await self._summarize_sources(source_items)
+                    self.metrics_total_sources_seen += len(query_sources)
+                    return query_sources, query_summary
+                except Exception as e:
+                    status_messages.append(f"⚠️ Error during parallel summarization for cached results: {e}")
+                    return [], query_summary
+            else:
+                self.metrics_cache_misses += 1
+                # Perform web search
+                try:
+                    summary, web_results = await self.web_search_async(q)
+                    # Store query-level summary
+                    if summary:
+                        query_summary = f"Query: {q}\nSummary: {summary}"
+                    # Store in cache (L1 + L2)
+                    self.cache_manager.set(nq, web_results, summary)
+                    
+                    # Limit to topk
+                    web_results = web_results[:self.topk]
+                    
+                    # Prepare source items for summarization
+                    source_items = []
+                    for r in web_results:
+                        source_item = SourceItem(
+                            id=0,
+                            title=r.get("title", ""),
+                            url=r.get("url", ""),
+                            snippet=r.get("snippet", ""),
+                            date=r.get("published"),
+                        )
+                        source_items.append((source_item, r))
+                    
+                    try:
+                        query_sources = await self._summarize_sources(source_items)
+                        self.metrics_total_sources_seen += len(query_sources)
+                        return query_sources, query_summary
+                    except Exception as e:
+                        status_messages.append(f"⚠️ Error during parallel summarization: {e}")
+                        return [], query_summary
+                except Exception as e:
+                    status_messages.append(f"❌ Error searching {q}: {e}")
+                    return [], None
+
+        # Process all queries in parallel
+        query_tasks = [process_single_query(q) for q in queries]
+        query_results = await asyncio.gather(*query_tasks, return_exceptions=True)
+        
+        # Collect results
+        for result in query_results:
+            if isinstance(result, Exception):
+                continue
+            query_sources, q_summary = result
+            unique_sources.extend(query_sources)
+            if q_summary:
+                query_summaries.append(q_summary)
+
+        # Deduplicate
+        final_sources = []
+        seen_urls = set()
+
+        for src in unique_sources:
+            if src.url not in seen_urls:
+                final_sources.append(src)
+                seen_urls.add(src.url)
+
+        return final_sources, query_summaries
+
+    # -----------------------------------------------------------
+    # MAIN RESEARCH PIPELINE
+    # -----------------------------------------------------------
+
+    async def run(
+        self,
+        topic: str,
+        queries: Optional[List[str]] = None,
+        uploaded_files: Optional[List[str]] = None,
+        approved_queries: Optional[List[str]] = None,  # For backward compatibility
+    ) -> AsyncGenerator[Tuple[str, List, str, Optional[object]], None]:
+        """Execute multi-wave research pipeline. Yields (report_md, sources_data, status_text, analytics)."""
+        if approved_queries:
+            queries = approved_queries
+
+        # Generate queries if not provided
+        if not queries:
+            query_response = await self.planner.generate_async(topic)
+            queries = query_response.queries[:self.num_searches]
+
+        status_messages = []
+
+        # ----------- INITIALIZATION ----------
+        start_time = time.monotonic()
+        wave = 1
+        waves_total = min(self.max_waves, self.max_waves)
+        final_report = None
+
+        # Reset metrics for this run
+        self.metrics_queries_executed = 0
+        self.metrics_total_sources_seen = 0
+        self.metrics_cache_hits = 0
+        self.metrics_cache_misses = 0
+        
+        # Track wave statistics
+        wave_stats_list: List[WaveStat] = []
+        
+        # Track all queries and query-level summaries across waves
+        all_queries_used: List[str] = []
+        all_query_summaries: List[str] = []
+
+        # Generate trace ID
         trace_id = gen_trace_id()
         trace_url = f"{TRACE_DASHBOARD}{trace_id}"
-        
-        status = ["🔄 Initializing..."]
-        
-        # Reset per-run cache and counters
-        self._search_cache.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
-        
-        yield ("", [], "\n\n".join(status))
-        
-        try:
-            # Check API key
-            if not OPENAI_API_KEY:
-                yield ("", [], "❌ Error: OPENAI_API_KEY not set.\n\nPlease check:\n1. Your .env file exists in the project root\n2. It contains: OPENAI_API_KEY=sk-...\n3. The API key is valid and not expired")
-                return
-            
-            # Verify API key format
-            if not OPENAI_API_KEY.startswith(("sk-", "sk-proj-")):
-                yield ("", [], f"❌ Error: Invalid API key format. Should start with 'sk-' or 'sk-proj-'\n\nCurrent key starts with: {OPENAI_API_KEY[:10] if len(OPENAI_API_KEY) > 10 else 'too short'}...")
-                return
-            
-            # Start trace (using reference format)
-            with trace("Research trace", trace_id=trace_id):
-                # Trace URL already has https:// prefix, so Gradio will auto-link it
-                status.append(f"🔗 Trace: {trace_url}")
-                yield ("", [], "\n\n".join(status))
-                
-                # WAVE 1: Use approved queries or generate them
-                if approved_queries:
-                    # Use pre-approved queries
-                    queries = approved_queries
-                    status.append(f"✅ Using {len(queries)} approved queries")
-                    yield ("", [], "\n\n".join(status))
-                else:
-                    # Generate queries (legacy path, for CLI)
-                    status.append("📋 Generating initial search queries...")
-                    yield ("", [], "\n\n".join(status))
-                    
-                    query_gen = QueryGeneratorAgent(openai_client=self.openai_client)
-                    query_response = await query_gen.generate_async(query)
-                    queries = query_response.queries
-                    status.append(f"✅ Generated {len(queries)} queries")
-                    yield ("", [], "\n\n".join(status))
-                
-                # Perform Wave 1 searches
-                status.append(f"🔍 Wave 1: Searching {len(queries)} queries...")
-                yield ("", [], "\n\n".join(status))
-                
-                source_index: Dict[str, SourceItem] = {}  # URL -> SourceItem (for deduplication)
-                all_summaries: List[SearchResult] = []  # All summaries from all waves
-                query_level_summaries: List[str] = []  # Query-level summaries from hosted search
-                
-                # Search and build source index
-                hits, query_summaries = await self._web_search_many(queries)
-                status.append(f"📦 Cache: {self._cache_hits} hits • {self._cache_misses} misses • {len(self._search_cache)} entries")
-                yield ("", [], "\n\n".join(status))
-                
-                query_level_summaries.extend(query_summaries)
-                source_index = self._build_source_index(hits, source_index)
-                status.append(f"✅ Wave 1: Found {len(source_index)} unique sources")
-                yield ("", [], "\n\n".join(status))
-                
-                # Summarize each result
-                status.append("📝 Summarizing search results...")
-                yield ("", [], "\n\n".join(status))
-                
-                wave1_summaries = await self._summarize_each_source(list(source_index.values()))
-                all_summaries.extend(wave1_summaries)
-                status.append(f"✅ Summarized {len(wave1_summaries)} results")
-                yield ("", [], "\n\n".join(status))
-                
-                # FOLLOW-UP WAVES
-                iteration = 1
-                while iteration < self.max_waves:
-                    # Build findings text for follow-up decision
-                    findings_text = self._join_findings(query, source_index, all_summaries)
-                    
-                    status.append(f"🤔 Evaluating if more research is needed (iteration {iteration + 1})...")
-                    yield ("", [], "\n\n".join(status))
-                    
-                    followup_agent = FollowUpDecisionAgent(openai_client=self.openai_client)
-                    decision = await followup_agent.decide_async(query, findings_text)
-                    
-                    if not decision.should_follow_up:
-                        status.append("✅ Research complete—no follow-up needed")
-                        yield ("", [], "\n\n".join(status))
-                        break
-                    
-                    iteration += 1
-                    status.append(f"🔍 Wave {iteration}: Conducting follow-up research...")
-                    yield ("", [], "\n\n".join(status))
-                    
-                    # Track max ID before merging to identify new sources
-                    max_id_before = max([s.id for s in source_index.values()], default=0)
-                    
-                    # Perform follow-up searches
-                    hits2, followup_query_summaries = await self._web_search_many(decision.queries)
-                    status.append(f"📦 Cache: {self._cache_hits} hits • {self._cache_misses} misses • {len(self._search_cache)} entries")
-                    yield ("", [], "\n\n".join(status))
-                    
-                    query_level_summaries.extend(followup_query_summaries)
-                    source_index = self._merge_dedupe(source_index, hits2)
-                    status.append(f"✅ Wave {iteration}: Found {len(source_index)} total unique sources")
-                    yield ("", [], "\n\n".join(status))
-                    
-                    # Summarize only new sources (those with IDs greater than max_id_before)
-                    new_sources = [s for s in source_index.values() if s.id > max_id_before]
-                    if new_sources:
-                        status.append(f"📝 Summarizing {len(new_sources)} new results...")
-                        yield ("", [], "\n\n".join(status))
-                        new_summaries = await self._summarize_each_source(new_sources)
-                        all_summaries.extend(new_summaries)
-                        status.append(f"✅ Summarized {len(new_summaries)} new results")
-                        yield ("", [], "\n\n".join(status))
-                
-                # SYNTHESIS: Format findings and write report
-                status.append("✍️ Writing research report...")
-                yield ("", [], "\n\n".join(status))
-                
-                # Generate report
-                report = await self._write_report(
-                    query, source_index, all_summaries, query_level_summaries
+        status_messages.append(f"🔗 Trace: {trace_url}")
+
+        yield ("", [], "\n\n".join(status_messages), None)
+
+        with trace("Research trace", trace_id=trace_id):
+            # ----------- FILE SUMMARIES (WAVE 0) ----------
+            if uploaded_files:
+                status_messages.append(f"📂 Found {len(uploaded_files)} user-uploaded file(s).")
+                yield ("", [], "\n\n".join(status_messages), None)
+
+                files_summaries = await self.process_uploaded_files(
+                    uploaded_files, status_messages
                 )
-                status.append(f"✅ Generated report with {len(report.sections)} sections")
-                id_to_source = {item.id: item for item in sorted(source_index.values(), key=lambda x: x.id)}
-                md = render_markdown(report, source_index=id_to_source)
-                yield (md, [], "\n\n".join(status))
+                self._merge_sources(files_summaries)
+                status_messages.append("📁 File processing completed.\n")
+                yield ("", [], "\n\n".join(status_messages), None)
+
+            # ----------- MULTI-WAVE SEARCH ----------
+            while wave <= waves_total:
+                wave_start_time = time.monotonic()
+                status_messages.append(f"🌊 Starting Wave {wave}/{waves_total}")
+                yield ("", [], "\n\n".join(status_messages), None)
+
+                # Track queries for this wave
+                wave_queries_count = len(queries)
+                all_queries_used.extend(queries)
                 
-                # Build sources_data for final yield
-                sources_data = []
-                for item in sorted(source_index.values(), key=lambda x: x.id):
-                    # Safely truncate title (handle None/empty)
-                    title = item.title or ""
-                    if len(title) > 80:
-                        title = title[:80] + "..."
-                    source_type = "news" if item.domain and any(k in item.domain for k in ["news", "cnn", "bbc", "reuters"]) else "web"
-                    sources_data.append([title, item.url, source_type, item.date or "N/A"])
+                # Step 1 — Web search
+                wave_sources, wave_query_summaries = await self.run_web_search(
+                    queries, status_messages
+                )
                 
-                status.append("✅ Complete!")
-                # Final yield with sources_data
-                yield (md, sources_data, "\n\n".join(status))
-        
-        except Exception as e:
-            emsg = str(e)
-            error_type = type(e).__name__
+                # Collect query-level summaries
+                all_query_summaries.extend(wave_query_summaries)
+                
+                # Track sources discovered in this wave
+                wave_sources_count = len(wave_sources)
+
+                # Merge
+                self._merge_sources(wave_sources)
+                
+                # Calculate wave duration
+                wave_duration = time.monotonic() - wave_start_time
+
+                status_messages.append(f"🧮 Total unique sources so far: {len(self.source_index)}")
+                yield ("", [], "\n\n".join(status_messages), None)
+                
+                # Record wave statistics
+                wave_stats_list.append(
+                    WaveStat(
+                        wave_index=wave,
+                        num_queries=wave_queries_count,
+                        num_sources_discovered=wave_sources_count,
+                        duration_seconds=wave_duration,
+                    )
+                )
+
+                # Step 2 — Follow-Up Decision
+                # Build findings text for follow-up decision
+                findings_text = f"Topic: {topic}\n\nSources found: {len(self.source_index)}\n"
+                for i, src in enumerate(list(self.source_index.values())[:10], 1):
+                    findings_text += f"{i}. {src.title} - {src.snippet[:100]}...\n"
+
+                followup = await self.followup_agent.decide_async(
+                    original_query=topic,
+                    findings_text=findings_text,
+                )
+
+                if not followup.should_follow_up or wave == waves_total:
+                    status_messages.append(f"✔ No more follow-ups required. Ending search waves.\n")
+                    yield ("", [], "\n\n".join(status_messages), None)
+                    break
+
+                queries = followup.queries[:self.num_searches]
+                wave += 1
+                status_messages.append(f"🔄 Follow-up queries generated ({len(queries)})")
+                yield ("", [], "\n\n".join(status_messages), None)
+
+            # ----------- FINAL WRITING ----------
+            status_messages.append("✍️ Writing final long-form report...")
+            yield ("", [], "\n\n".join(status_messages), None)
+
+            all_sources_list = list(self.source_index.values())[:self.max_sources]
             
-            if "Connection error" in emsg or "APIConnectionError" in error_type:
-                yield ("", [], f"❌ Connection Error: check internet/API key.\n\nDetails: {emsg}")
-            elif "Event loop" in emsg or "no current event loop" in emsg:
-                yield ("", [], f"❌ Event Loop Error: internal async issue.\n\nDetails: {emsg}")
-            else:
-                yield ("", [], f"❌ Error ({error_type}): {emsg}")
-    
-    def _norm_query(self, q: str) -> str:
-        """Lowercase, collapse spaces, cap length for safe cache keys."""
-        return " ".join((q or "").lower().split())[:300]
-    
-    async def _web_search_one(self, q: str):
-        """Run a single web search under concurrency guard."""
-        web_search_async = get_search_provider_async(self.provider, debug=False)
-        async with self._search_sem:
-            return await web_search_async(q)
-    
-    async def _web_search_many(self, queries: List[str]) -> Tuple[List[Dict], List[str]]:
-        """
-        Perform multiple web searches using OpenAI WebSearchTool with caching and concurrency guardrails.
-        Returns (list of raw result dicts, list of query-level summaries).
-        """
-        import asyncio
-        
-        all_hits: List[Dict] = []
-        query_summaries: List[str] = []
-        
-        async def fetch_or_cache(q: str):
-            key = self._norm_query(q)
-            # L1: in-memory
-            if key in self._search_cache:
-                self._cache_hits += 1
-                results, summary = self._search_cache[key]
-                return summary, results
-            
-            # L2: disk
-            l2 = _cache_get_disk(self._disk_cache_conn, key)
-            if l2 is not None:
-                self._cache_hits += 1
-                results = l2.get("results", [])
-                summary = l2.get("summary")
-                # populate L1
-                self._search_cache[key] = (results, summary)
-                return summary, results
-            
-            # MISS: fetch
-            self._cache_misses += 1
-            try:
-                out = await self._web_search_one(q)
-                if isinstance(out, tuple) and len(out) == 2:
-                    summary, results = out
+            # Filter and deduplicate sources before writing
+            filtered_sources = self._filter_top_sources(all_sources_list, top_k=15)
+            status_messages.append(f"📝 Filtered to {len(filtered_sources)} unique sources (from {len(all_sources_list)})")
+
+            # Format sources for writer - truncate long summaries and enhance titles
+            summaries = []
+            for src in filtered_sources:
+                # Use content (full detailed summary) if available, fallback to snippet
+                summary_text = src.content if src.content else (src.snippet or "")
+                # Truncate very long summaries (keep first 3000 chars + key points)
+                if len(summary_text) > 3000:
+                    # Try to preserve structure by keeping first part and last 200 chars
+                    summary_text = summary_text[:2800] + "... [truncated] ..." + summary_text[-200:]
+                
+                # Enhance title with context for better synthesis
+                title = src.title or "Untitled Source"
+                if len(title) < 40 and summary_text:
+                    # Extract key topic from summary for context
+                    summary_words = summary_text.split()[:8]
+                    if summary_words:
+                        topic_hint = " ".join(summary_words)
+                        title = f"{title} – {topic_hint[:50]}"
+                
+                summaries.append(f"Title: {title}\nURL: {src.url}\nSummary: {summary_text}")
+
+            # Extract meaningful subtopic themes from queries for better report structure
+            subtopic_themes = self._extract_subtopic_themes(all_queries_used, topic=topic)
+            if not subtopic_themes:
+                # Fallback 1: Try extracting from topic itself if it enumerates subtopics
+                topic_subtopics = self._extract_subtopics_from_topic(topic)
+                if topic_subtopics:
+                    subtopic_themes = topic_subtopics
                 else:
-                    summary, results = None, out
-            except Exception:
-                summary, results = None, []
+                    # Fallback 2: use first few queries as subtopics
+                    if all_queries_used:
+                        subtopic_themes = [q[:60] for q in all_queries_used[:7]]
+                    else:
+                        # Final fallback: use topic as single subtopic
+                        subtopic_themes = [topic[:60]]
             
-            results = results or []
-            # write-through: L1 + L2
-            self._search_cache[key] = (results, summary)
-            _cache_set_disk(self._disk_cache_conn, key, {"results": results, "summary": summary})
-            return summary, results
-        
-        tasks = [fetch_or_cache(q) for q in queries]
-        for coro in asyncio.as_completed(tasks):
-            summary, results = await coro
-            if summary and summary.strip():
-                query_summaries.append(summary.strip())
+            status_messages.append(f"📋 Report structure themes: {', '.join(subtopic_themes[:5])}")
             
-            # Normalize and cap per-query results
-            for result in (results or [])[:TOPK_PER_QUERY]:
-                if isinstance(result, dict):
-                    all_hits.append({
-                        "title": result.get("title", ""),
-                        "url": result.get("url", ""),
-                        "snippet": result.get("snippet", ""),
-                        "published": result.get("published"),
-                        "provider": result.get("provider", "openai"),
-                    })
-        
-        return (all_hits, query_summaries)
-    
-    def _canon(self, url: str) -> str:
-        """Normalize URL for deduplication: lower-case host, strip trailing /, drop #fragment, drop UTM params."""
-        try:
-            parsed = urlparse(url.strip())
-            # Lower-case host
-            netloc = parsed.netloc.lower()
-            # Strip trailing slash from path
-            path = parsed.path.rstrip('/')
-            # Drop fragment
-            fragment = ''
-            # Drop common UTM params
-            if parsed.query:
-                params = parse_qs(parsed.query, keep_blank_values=True)
-                utm_params = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid']
-                params = {k: v for k, v in params.items() if k not in utm_params}
-                query = urlencode(params, doseq=True) if params else ''
-            else:
-                query = ''
-            return urlunparse((parsed.scheme, netloc, path, parsed.params, query, fragment))
-        except Exception:
-            return url.strip()
-    
-    def _build_source_index(self, hits: List[Dict], existing_index: Optional[Dict[str, SourceItem]] = None) -> Dict[str, SourceItem]:
-        """
-        Build or extend Source Index with numeric IDs (1..K).
-        Deduplicates by normalized URL. Returns URL -> SourceItem mapping.
-        """
-        if existing_index is None:
-            existing_index = {}
-        
-        next_id = max([s.id for s in existing_index.values()], default=0) + 1
-        
-        # Effective cap from UI (defensive min with constant)
-        cap = min(self.num_sources, MAX_SOURCES_FINAL)
-        
-        for hit in hits:
-            url = str(hit.get("url", "")).strip()
-            if not url:
-                continue
-            
-            # Normalize URL for deduplication
-            canon_url = self._canon(url)
-            if canon_url in existing_index:
-                continue  # Skip duplicates
-            
-            # Extract domain
-            try:
-                domain = urlparse(canon_url).netloc.lower()
-            except Exception:
-                domain = None
-            
-            source_item = SourceItem(
-                id=next_id,
-                title=(hit.get("title") or "").strip(),
-                url=url,  # Store original URL, but use canon_url for dedupe
-                snippet=(hit.get("snippet") or "").strip(),
-                date=hit.get("published"),
-                domain=domain,
+            # Prepare query-level summaries for prompt (truncate if too long)
+            query_level_summaries_text = ""
+            if all_query_summaries:
+                query_level_summaries_text = "\n\n".join(all_query_summaries)
+                # Limit query summaries to reasonable length
+                if len(query_level_summaries_text) > 2000:
+                    query_level_summaries_text = query_level_summaries_text[:1800] + "... [truncated]"
+
+            # Estimate token count for final prompt and log if needed
+            prompt_parts = [
+                topic,
+                " ".join(subtopic_themes),
+                query_level_summaries_text,
+                "\n".join(summaries),
+            ]
+            estimated_prompt_tokens = self._estimate_token_count("\n\n".join(prompt_parts))
+            if estimated_prompt_tokens > 10000:
+                status_messages.append(
+                    f"⚠️ Writer prompt is long (~{estimated_prompt_tokens} tokens). "
+                    f"Consider further filtering sources if needed."
+                )
+
+            # Call writer with filtered sources and meaningful subtopics
+            final_report = await self.writer.draft_async(
+                topic=topic,
+                subtopics=subtopic_themes,
+                summaries=summaries,
+                sources=filtered_sources,
+                query_level_summaries=query_level_summaries_text,
             )
-            existing_index[canon_url] = source_item
-            next_id += 1
             
-            if len(existing_index) >= cap:
-                break
-        
-        return existing_index
-    
-    def _merge_dedupe(self, existing_index: Dict[str, SourceItem], new_hits: List[Dict]) -> Dict[str, SourceItem]:
-        """Merge new hits into existing source index, deduplicating by URL."""
-        return self._build_source_index(new_hits, existing_index)
-    
-    async def _summarize_each_source(self, source_items: List[SourceItem]) -> List[SearchResult]:
-        """
-        Summarize each source using SearchAgent with bounded concurrency.
-        Preserves ordering by index.
-        """
-        import asyncio
-        summarizer = SearchAgent(openai_client=self.openai_client)
-        
-        async def summarize_guarded(i: int, item: SourceItem):
-            try:
-                async with self._summary_sem:
-                    s = await summarizer.summarize_result_async(item)
-                return (i, s or "")
-            except Exception:
-                return (i, "")
-        
-        tasks = [summarize_guarded(i, it) for i, it in enumerate(source_items)]
-        results_by_idx = [""] * len(source_items)
-        
-        for coro in asyncio.as_completed(tasks):
-            i, summary = await coro
-            results_by_idx[i] = summary
-        
-        out: List[SearchResult] = []
-        for it, summary in zip(source_items, results_by_idx):
-            out.append(SearchResult(
-                id=it.id,
-                title=it.title,
-                url=it.url,
-                summary=summary or it.snippet  # Fallback on snippet
-            ))
-        return out
-    
-    def _join_findings(self, query: str, source_index: Dict[str, SourceItem], summaries: List[SearchResult]) -> str:
-        """
-        Build findings text for follow-up decision agent.
-        Includes top 10 summaries and a section describing what has NOT been found yet.
-        """
-        text = f"Query: {query}\n\n"
-        
-        # Top 10 summaries (ID, Title, Summary)
-        text += "Top 10 Summaries:\n"
-        sorted_summaries = sorted(summaries, key=lambda x: x.id)[:10]
-        for result in sorted_summaries:
-            text += f"\n{result.id}. Title: {result.title}\n   Summary: {result.summary}\n"
-        
-        # Section describing what has NOT been found yet (empty sections)
-        text += "\n\nWhat Has NOT Been Found Yet:\n"
-        text += "- Missing data or statistics\n"
-        text += "- Conflicting sources or viewpoints\n"
-        text += "- Unexplored angles or perspectives\n"
-        text += "- Case studies or real-world examples\n"
-        text += "- Technical depth or detailed explanations\n"
-        text += "- Trends or future implications\n"
-        text += "- Expert opinions or authoritative sources\n"
-        text += "- Historical context or evolution\n"
-        text += "- Comparisons with alternatives\n"
-        text += "- Risks, limitations, or controversies\n"
-        text += "\n(Note: The above list represents potential gaps. Evaluate which of these are actually missing based on the summaries above.)\n"
-        
-        return text
-    
-    async def _write_report(self, query: str, source_index: Dict[str, SourceItem], summaries: List[SearchResult], query_level_summaries: List[str]) -> ResearchReport:
-        """
-        Write the research report using WriterAgent.
-        Formats findings in the reference style and passes to Writer.
-        Post-processes report to ensure citations match Source Index.
-        """
-        from app.core.retry import with_retry
-        import re
-        
-        # Reconstruct SourceDoc list from source_index for WriterAgent
-        source_items = sorted(source_index.values(), key=lambda x: x.id)
-        sources: List[SourceDoc] = []
-        # Create ID -> SourceItem mapping for citation validation
-        id_to_source: Dict[int, SourceItem] = {item.id: item for item in source_items}
-        
-        for item in source_items:
-            try:
-                sources.append(SourceDoc(
-                    title=item.title,
-                    url=item.url,  # Let Pydantic validate HttpUrl on model creation
-                    snippet=item.snippet,
-                    published=item.date,
-                    source_type="news" if item.domain and any(k in item.domain for k in ["news", "cnn", "bbc", "reuters"]) else "web",
-                    provider="openai",
-                ))
-            except Exception:
-                continue
-        
-        # Format summaries in reference style: "1. Title: ...\n   URL: ...\n   Summary: ..."
-        # This matches the format expected by the reference synthesis_agent
-        formatted_summaries: List[str] = []
-        
-        # Include query-level summaries first (provide high-level context)
-        if query_level_summaries:
-            formatted_summaries.append("Query-level search summaries:\n" + "\n\n".join(query_level_summaries) + "\n")
-        
-        # Then include per-result summaries with IDs
-        for result in summaries:
-            formatted_summaries.append(f"{result.id}. Title: {result.title}\n   URL: {result.url}\n   Summary: {result.summary}")
-        
-        writer = WriterAgent(openai_client=self.openai_client)
-        report = await with_retry(lambda: writer.draft_async(
-            topic=query,
-            subtopics=[],  # No subtopics in new flow
-            summaries=formatted_summaries,  # Query-level + per-result summaries
-            sources=sources,
-        ))
-        
-        # Post-process: Extract numeric citations from text and validate against Source Index
-        from app.schemas.report import Section
-        processed_sections: List[Section] = []
-        for sec in report.sections:
-            # Extract numeric citations like [1], [2], [10] from the text
-            citation_ids = set()
-            pattern = r'\[(\d+)\]'
-            matches = re.findall(pattern, sec.summary)
-            for match in matches:
-                try:
-                    citation_id = int(match)
-                    # Only keep citations that exist in Source Index
-                    if citation_id in id_to_source:
-                        citation_ids.add(citation_id)
-                except ValueError:
-                    continue
+            # Enhanced validation of structured output
+            validation_issues = []
+            if not final_report.sections:
+                validation_issues.append("missing sections")
+            else:
+                # Check for quality issues
+                empty_sections = [i for i, sec in enumerate(final_report.sections) if not sec.summary or len(sec.summary.strip()) < 50]
+                if empty_sections:
+                    validation_issues.append(f"empty/too-short sections: {empty_sections}")
+                
+                generic_titles = [i for i, sec in enumerate(final_report.sections) if sec.title and len(sec.title) < 10]
+                if generic_titles:
+                    validation_issues.append(f"generic section titles: {generic_titles}")
+                
+                # Check if sections have meaningful content
+                total_content_length = sum(len(sec.summary or "") for sec in final_report.sections)
+                if total_content_length < 500:
+                    validation_issues.append(f"insufficient content (total: {total_content_length} chars)")
             
-            # Store IDs directly in citations
-            processed_sections.append(Section(
-                title=sec.title,
-                summary=sec.summary,  # Text already has [1], [2] citations
-                citations=sorted(citation_ids),  # Store IDs directly
-            ))
-        
-        # Return report with processed sections
-        report.sections = processed_sections
-        
-        return report
-    
+            if validation_issues:
+                status_messages.append(
+                    f"⚠️ Writer output validation issues: {', '.join(validation_issues)}. "
+                    f"Retrying with simplified prompt..."
+                )
+                # Fallback: retry with simplified approach
+                simplified_sources = filtered_sources[:10]
+                simplified_summaries = summaries[:10]
+                final_report = await self.writer.draft_async(
+                    topic=topic,
+                    subtopics=subtopic_themes[:5],  # Use fewer subtopics
+                    summaries=simplified_summaries,  # Use fewer summaries
+                    sources=simplified_sources,  # Use fewer sources
+                    query_level_summaries=query_level_summaries_text[:1000] if query_level_summaries_text else "",
+                )
+                
+                # Re-validate after retry
+                if not final_report.sections:
+                    raise ValueError("WriterAgent failed to generate sections after retry. Check prompt and model configuration.")
+                
+                # Log retry success
+                status_messages.append("✅ Retry successful - report generated with simplified prompt.")
+            else:
+                status_messages.append(f"✅ Report generated successfully with {len(final_report.sections)} sections.")
+
+            # Render markdown
+            # Build source index for citations (use filtered sources for final report)
+            id_to_source = {i+1: src for i, src in enumerate(filtered_sources)}
+            md = render_markdown(final_report, source_index=id_to_source)
+
+            status_messages.append("📄 Report complete.\n")
+
+            # Calculate total duration
+            total_duration = time.monotonic() - start_time
+
+            # Build efficiency metrics
+            total_queries = self.metrics_queries_executed
+            total_seen = self.metrics_total_sources_seen
+            unique_used = len(filtered_sources)
+
+            total_cache_ops = self.metrics_cache_hits + self.metrics_cache_misses
+            cache_hit_rate = (
+                self.metrics_cache_hits / total_cache_ops if total_cache_ops > 0 else None
+            )
+
+            efficiency = EfficiencyMetrics(
+                queries_executed=total_queries,
+                total_sources_seen=total_seen,
+                unique_sources_used=unique_used,
+                cache_hit_rate=cache_hit_rate,
+                waves_completed=wave,
+                total_duration_seconds=total_duration,
+            )
+
+            # Build analytics payload (use filtered sources for final report)
+            analytics = build_analytics_payload(
+                topic=topic,
+                report=final_report,
+                sources=filtered_sources,
+                wave_stats=wave_stats_list,
+                efficiency=efficiency,
+            )
+
+            # Build sources_data for final yield
+            sources_data = []
+            for i, src in enumerate(filtered_sources, 1):
+                title = src.title or ""
+                if len(title) > 80:
+                    title = title[:80] + "..."
+                source_type = src.source_type or "web"
+                sources_data.append([title, src.url, source_type, src.published or "N/A"])
+
+            yield (md, sources_data, "\n\n".join(status_messages), analytics)
+
+    # -----------------------------------------------------------
+    # PLANNING WRAPPER
+    # -----------------------------------------------------------
+
+    async def generate_plan(self, topic: str) -> QueryResponse:
+        """Generate initial search plan with queries and thoughts."""
+        return await self.planner.generate_async(topic)

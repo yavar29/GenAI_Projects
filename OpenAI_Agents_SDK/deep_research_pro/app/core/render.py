@@ -43,8 +43,8 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
     if report.sections:
         lines.append("## Table of Contents")
         for i, sec in enumerate(report.sections, 1):
-            # Generate slug from full heading text (including number) to match actual heading
-            heading_text = f"{i}. {sec.title}"
+            # Generate slug from heading text (no numbering) to match actual heading
+            heading_text = sec.title
             slug = _slugify(heading_text)
             lines.append(f"- [{heading_text}](#{slug})")
         lines.append("")
@@ -59,7 +59,8 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
     # Sections with inline citations already in text (no separate Citations line)
     for i, sec in enumerate(report.sections, 1):
         # Create heading - markdown renderers will auto-create anchors from heading text
-        heading_text = f"{i}. {sec.title}"
+        # Use section title directly without numbering
+        heading_text = sec.title
         lines.append(f"## {heading_text}")
         
         # Replace inline citations [1], [2] with styled clickable boxes
@@ -110,9 +111,25 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
                     if citation_id in id_to_source:
                         source_item = id_to_source[citation_id]
                         url = source_item.url if hasattr(source_item, 'url') else str(source_item)
+                        
+                        # Clean up URL first (remove angle brackets if present)
+                        url = url.strip('<>').strip()
+                        
+                        # Fix malformed URLs (missing protocol or domain)
+                        if url and not url.startswith(('http://', 'https://', '#')):
+                            if url.startswith('/'):
+                                # Relative URL - link to reference section
+                                url = f"#ref-{citation_id}"
+                            elif '.' not in url or url.strip() == '' or len(url) < 4:
+                                # Malformed URL - link to reference section
+                                url = f"#ref-{citation_id}"
+                            else:
+                                # Missing protocol, add https
+                                url = f"https://{url}"
+                        
                         # Use HTML span with inline styles for box appearance
                         return f'<a href="{url}" style="display: inline-block; padding: 2px 6px; margin: 0 2px; background-color: #e3f2fd; border: 1px solid #2196f3; border-radius: 3px; color: #1976d2; text-decoration: none; font-size: 0.9em; font-weight: 500;">[{citation_id_str}]</a>'
-                except ValueError:
+                except (ValueError, AttributeError):
                     pass
                 return match.group(0)  # Return original if can't parse
             
@@ -131,14 +148,49 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
     # References: Build programmatically from Source Index
     if ref_map:
         lines.append("## References")
-        # Use Source Index: render as [id] title — <url>
+        lines.append("")  # Blank line after heading
+        # Use Source Index: render as [id] title — url (with anchor for internal links)
+        # Each reference on its own line (one per line)
         for citation_id, source_item in ref_map.items():
             url = source_item.url if hasattr(source_item, 'url') else str(source_item)
             title = source_item.title if hasattr(source_item, 'title') else ""
+            
+            # Clean up URL first (remove angle brackets if present)
+            original_url = url = url.strip('<>').strip() if url else ""
+            
+            # Fix malformed URLs (missing protocol or domain)
+            display_url = original_url
+            if url and not url.startswith(('http://', 'https://', '#')):
+                if url.startswith('/'):
+                    # Relative URL - mark as unavailable but show original
+                    url = "#"  # Non-functional link
+                    display_url = f"(Relative URL: {original_url})"
+                elif '.' not in url or url.strip() == '' or len(url) < 4:
+                    # Malformed URL - mark as unavailable
+                    url = "#"
+                    display_url = f"(Invalid URL: {original_url})"
+                else:
+                    # Missing protocol, add https
+                    url = f"https://{url}"
+                    display_url = url
+            
+            # Add anchor ID for reference section
+            anchor_id = f"ref-{citation_id}"
+            
+            # Each reference on a new line (one per line, no inline formatting)
+            # Title is clickable, URL is also clickable
             if title:
-                lines.append(f"[{citation_id}] {title} — <{url}>")
+                if url.startswith('http'):
+                    # Both title and URL are clickable links
+                    lines.append(f'<p id="{anchor_id}">[{citation_id}] <a href="{url}" target="_blank" rel="noopener noreferrer">{title}</a> — <a href="{url}" target="_blank" rel="noopener noreferrer">{display_url}</a></p>')
+                else:
+                    # Title links to reference anchor, URL shown as text
+                    lines.append(f'<p id="{anchor_id}">[{citation_id}] <a href="#{anchor_id}">{title}</a> — {display_url}</p>')
             else:
-                lines.append(f"[{citation_id}] <{url}>")
+                if url.startswith('http'):
+                    lines.append(f'<p id="{anchor_id}">[{citation_id}] <a href="{url}" target="_blank" rel="noopener noreferrer">{display_url}</a></p>')
+                else:
+                    lines.append(f'<p id="{anchor_id}">[{citation_id}] {display_url}</p>')
         lines.append("")
 
     return "\n".join(lines)

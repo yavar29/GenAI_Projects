@@ -16,7 +16,7 @@ class RawSource(BaseModel):
     published: Optional[str] = None
 
 class SearchOutput(BaseModel):
-    """What the hosted search agent should return."""
+    """Structured output from hosted search agent."""
     summary: str = Field(
         description="2–3 paragraph concise summary of results (<=300 words)."
     )
@@ -28,11 +28,7 @@ class SearchOutput(BaseModel):
 _HOSTED_AGENT: Optional[Agent] = None
 
 def _get_hosted_agent() -> Agent:
-    """
-    Memoize a single Agent instance that uses WebSearchTool and
-    returns a structured SearchOutput (summary + results[]).
-    Follows reference pattern: concise summary, capture main points, no fluff.
-    """
+    """Get singleton Agent instance using WebSearchTool with structured SearchOutput."""
     global _HOSTED_AGENT
     if _HOSTED_AGENT is None:
         _HOSTED_AGENT = Agent(
@@ -57,10 +53,7 @@ def _get_hosted_agent() -> Agent:
     return _HOSTED_AGENT
 
 async def _hosted_web_search_async(query: str) -> tuple[str, List[Dict]]:
-    """
-    Run the hosted web search agent (async) and normalize to (summary, List[dict]).
-    Returns both the summary and the results.
-    """
+    """Run hosted web search agent and return (summary, results)."""
     agent = _get_hosted_agent()
     result = await Runner.run(agent, input=query)
     payload = result.final_output_as(SearchOutput)
@@ -78,15 +71,11 @@ async def _hosted_web_search_async(query: str) -> tuple[str, List[Dict]]:
             "published": r.published,
             "provider": "openai",
         })
-    # If no results, return empty list (don't fabricate a placeholder)
-    # Upstream will handle "no sources" case appropriately
     
     return (summary, out)
 
 def get_search_provider_async(name: str = "hosted", debug: bool = False) -> Callable[[str], Coroutine[Any, Any, tuple[str, List[Dict]]]]:
-    """
-    Factory: returns async hosted search provider (avoids thread hops).
-    """
+    """Factory: returns async hosted search provider."""
     if name.lower() == "hosted":
         return _hosted_web_search_async
     raise ValueError(f"Unknown provider: {name}. Only 'hosted' is supported.")

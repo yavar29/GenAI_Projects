@@ -44,6 +44,11 @@ class WaveStat(BaseModel):
     num_queries: int
     num_sources_discovered: int
     duration_seconds: Optional[float] = None
+    # Cross-wave improvement tracking
+    wave_text_added: Optional[int] = None          # Words added in this wave
+    wave_text_rewritten: Optional[int] = None      # Words rewritten/changed in this wave
+    wave_citations_added: Optional[int] = None     # New citations added in this wave
+    wave_quality_change_score: Optional[float] = None  # Quality improvement score (-1 to 1)
 
 
 class EfficiencyMetrics(BaseModel):

@@ -30,7 +30,7 @@ import traceback
 import time
 
 import re
-from typing import Dict, List, AsyncGenerator, Optional, Tuple
+from typing import Dict, List, AsyncGenerator, Optional, Tuple, Set
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -63,6 +63,159 @@ MAX_WAVES = 3
 TOPK_PER_QUERY = 5
 MAX_SOURCES_FINAL = 25
 
+# Helper functions for cross-wave improvement tracking
+def _extract_citations_from_text(text: str) -> set[int]:
+    """Extract all citation IDs from text (e.g., [1], [2][3])."""
+    citations = set()
+    # Match [1], [2], [10], etc.
+    matches = re.findall(r'\[(\d+)\]', text)
+    for match in matches:
+        try:
+            citations.add(int(match))
+        except ValueError:
+            pass
+    return citations
+
+def _word_count(text: str) -> int:
+    """Count words in text (consistent with analytics_builder._safe_word_count)."""
+    if not text:
+        return 0
+    return len(text.split())
+
+def _calculate_report_quality_score(report: ResearchReport) -> float:
+    """
+    Calculate a quality score for a report (0.0 to 1.0).
+    Factors: word count, section count, citation density, section length.
+    """
+    if not report.sections:
+        return 0.0
+    
+    total_words = sum(_word_count(sec.summary or "") for sec in report.sections)
+    num_sections = len(report.sections)
+    all_citations = set()
+    for sec in report.sections:
+        all_citations.update(sec.citations)
+        all_citations.update(_extract_citations_from_text(sec.summary or ""))
+    
+    num_citations = len(all_citations)
+    
+    # Normalize factors (heuristic weights)
+    word_score = min(total_words / 2000.0, 1.0)  # Target: 2000 words
+    section_score = min(num_sections / 8.0, 1.0)  # Target: 8 sections
+    citation_score = min(num_citations / 15.0, 1.0)  # Target: 15 unique citations
+    
+    # Average section length (words per section)
+    avg_section_length = total_words / num_sections if num_sections > 0 else 0
+    section_length_score = min(avg_section_length / 250.0, 1.0)  # Target: 250 words/section
+    
+    # Weighted average
+    quality = (
+        word_score * 0.3 +
+        section_score * 0.2 +
+        citation_score * 0.3 +
+        section_length_score * 0.2
+    )
+    
+    return quality
+
+def _calculate_report_deltas(
+    previous_report: Optional[ResearchReport],
+    current_report: ResearchReport
+) -> Tuple[int, int, int, float]:
+    """
+    Calculate deltas between two reports.
+    
+    Returns:
+        (text_added, text_rewritten, citations_added, quality_change)
+    """
+    if previous_report is None:
+        # First wave - everything is new
+        total_words = sum(_word_count(sec.summary or "") for sec in current_report.sections)
+        all_citations = set()
+        for sec in current_report.sections:
+            all_citations.update(sec.citations)
+            all_citations.update(_extract_citations_from_text(sec.summary or ""))
+        quality = _calculate_report_quality_score(current_report)
+        return total_words, 0, len(all_citations), quality
+    
+    # Calculate previous metrics
+    prev_words = sum(_word_count(sec.summary or "") for sec in previous_report.sections)
+    prev_citations = set()
+    for sec in previous_report.sections:
+        prev_citations.update(sec.citations)
+        prev_citations.update(_extract_citations_from_text(sec.summary or ""))
+    prev_quality = _calculate_report_quality_score(previous_report)
+    
+    # Calculate current metrics
+    curr_words = sum(_word_count(sec.summary or "") for sec in current_report.sections)
+    curr_citations = set()
+    for sec in current_report.sections:
+        curr_citations.update(sec.citations)
+        curr_citations.update(_extract_citations_from_text(sec.summary or ""))
+    curr_quality = _calculate_report_quality_score(current_report)
+    
+    # Calculate deltas
+    text_added = max(0, curr_words - prev_words)
+    
+    # Estimate text rewritten by comparing section titles and content similarity
+    # Simple heuristic: if section titles match, assume content was rewritten
+    prev_titles = {sec.title for sec in previous_report.sections}
+    curr_titles = {sec.title for sec in current_report.sections}
+    common_titles = prev_titles & curr_titles
+    
+    # For common sections, estimate rewritten words as average section length
+    rewritten_words = 0
+    if common_titles:
+        avg_section_length = prev_words / len(previous_report.sections) if previous_report.sections else 0
+        rewritten_words = int(len(common_titles) * avg_section_length * 0.5)  # Assume 50% rewritten
+    
+    citations_added = len(curr_citations - prev_citations)
+    quality_change = curr_quality - prev_quality
+    
+    return text_added, rewritten_words, citations_added, quality_change
+
+def _format_sources_for_writer(
+    sources: List[SourceDoc],
+    max_summary_length: int = 3000,
+    enhance_titles: bool = True
+) -> List[str]:
+    """
+    Format sources for writer agent input.
+    
+    Args:
+        sources: List of SourceDoc objects
+        max_summary_length: Maximum length for summary text (default: 3000)
+        enhance_titles: Whether to enhance titles with context (default: True)
+    
+    Returns:
+        List of formatted summary strings
+    """
+    formatted = []
+    for src in sources:
+        # Use content (full detailed summary) if available, fallback to snippet
+        summary_text = src.content if src.content else (src.snippet or "")
+        # Truncate very long summaries
+        if len(summary_text) > max_summary_length:
+            if max_summary_length > 2000:
+                # For longer limits, preserve structure
+                summary_text = summary_text[:max_summary_length - 200] + "... [truncated] ..." + summary_text[-200:]
+            else:
+                # For shorter limits, simple truncation
+                summary_text = summary_text[:max_summary_length - 20] + "... [truncated]"
+        
+        # Enhance title with context if requested
+        title = src.title or "Untitled Source"
+        if enhance_titles and len(title) < 40 and summary_text:
+            # Extract key topic from summary for context
+            summary_words = summary_text.split()[:8]
+            if summary_words:
+                topic_hint = " ".join(summary_words)
+                title = f"{title} – {topic_hint[:50]}"
+        
+        formatted.append(f"Title: {title}\nURL: {src.url}\nSummary: {summary_text}")
+    
+    return formatted
+
 class ResearchManager:
     """Orchestrates research pipeline: planning, search, file processing, follow-up, writing."""
 
@@ -72,14 +225,12 @@ class ResearchManager:
         max_sources: int = 25,
         max_waves: int = 2,
         topk_per_query: int = 5,
-        num_searches: int = 5,  # For backward compatibility
         num_sources: int = 8,  # For backward compatibility
     ):
         self.client = client or make_async_client()
         self.max_sources = max_sources
         self.max_waves = max_waves
         self.topk = topk_per_query
-        self.num_searches = num_searches
         self.num_sources = num_sources
 
         # Ensure API key is in environment for Agents SDK
@@ -147,11 +298,24 @@ class ResearchManager:
         # Otherwise return as-is (will be marked as invalid in render)
         return url
 
-    def _merge_sources(self, new_sources: List[SourceDoc]):
-        """Merge sources into global index."""
+    def _merge_sources(self, new_sources: List[SourceDoc], max_total: Optional[int] = None):
+        """Merge sources into global index.
+        
+        Args:
+            new_sources: List of new sources to merge
+            max_total: Optional maximum total sources to maintain. If provided, stops merging once limit is reached.
+        
+        Returns:
+            Number of sources actually merged
+        """
+        merged_count = 0
         for src in new_sources:
+            if max_total is not None and len(self.source_index) >= max_total:
+                break
             if src.url not in self.source_index:
                 self.source_index[src.url] = src
+                merged_count += 1
+        return merged_count
     
     def _deduplicate_sources(self, sources: List[SourceDoc]) -> List[SourceDoc]:
         """Remove duplicate sources based on content similarity."""
@@ -437,7 +601,7 @@ class ResearchManager:
         return summarized
 
     async def run_web_search(
-        self, queries: List[str], status_messages: List[str]
+        self, queries: List[str], status_messages: List[str], max_results_per_query: Optional[int] = None
     ) -> Tuple[List[SourceDoc], List[str]]:
         """Execute search pipeline: cache lookup, web search, summarization, deduplication.
         
@@ -450,6 +614,7 @@ class ResearchManager:
         Args:
             queries: List of search query strings to execute
             status_messages: List to append status updates (modified in-place)
+            max_results_per_query: Optional limit on results per query. If None, uses self.topk
         
         Returns:
             Tuple of (sources, query_summaries):
@@ -459,6 +624,8 @@ class ResearchManager:
         All queries are processed concurrently, and result summarization within each query
         is also parallelized for optimal performance.
         """
+        # Use provided limit or default to self.topk
+        effective_topk = max_results_per_query if max_results_per_query is not None else self.topk
         unique_sources = []
         query_summaries = []
 
@@ -481,7 +648,7 @@ class ResearchManager:
                     query_summary = f"Query: {q}\nSummary: {cached_summary}"
                 # Convert cached dicts to SourceItem tuples for summarization
                 # For cached results, we need to re-summarize to get full detailed summaries
-                results_to_process = cached_results[:self.topk]
+                results_to_process = cached_results[:effective_topk]
                 
                 source_items = []
                 for r in results_to_process:
@@ -512,8 +679,8 @@ class ResearchManager:
                     # Store in cache (L1 + L2)
                     self.cache_manager.set(nq, web_results, summary)
                     
-                    # Limit to topk
-                    web_results = web_results[:self.topk]
+                    # Limit to effective_topk
+                    web_results = web_results[:effective_topk]
                     
                     # Prepare source items for summarization
                     source_items = []
@@ -577,13 +744,8 @@ class ResearchManager:
         if approved_queries:
             queries = approved_queries
 
-        # Generate queries if not provided
-        if not queries:
-            query_response = await self.planner.generate_async(topic)
-            queries = query_response.queries[:self.num_searches]
-
         status_messages = []
-
+        
         # ----------- INITIALIZATION ----------
         start_time = time.monotonic()
         wave = 1
@@ -602,6 +764,36 @@ class ResearchManager:
         # Track all queries and query-level summaries across waves
         all_queries_used: List[str] = []
         all_query_summaries: List[str] = []
+        
+        # Track previous report for cross-wave comparison
+        previous_report: Optional[ResearchReport] = None
+
+        # Initial status message
+        status_messages.append(f"🚀 Starting research on: {topic}")
+        status_messages.append("=" * 60)
+        
+        # Generate queries if not provided
+        recommended_source_count = None
+        if not queries:
+            status_messages.append("🔍 Generating search queries...")
+            yield ("", [], "\n\n".join(status_messages), None)
+            query_response = await self.planner.generate_async(topic)
+            queries = query_response.queries
+            status_messages.append(f"✅ Generated {len(queries)} search queries")
+            
+            # Get recommended source count from planner if available
+            if hasattr(query_response, 'recommended_source_count') and query_response.recommended_source_count:
+                recommended_source_count = query_response.recommended_source_count
+                # Use recommended count if max_sources wasn't explicitly set (default is 25)
+                if self.max_sources == 25:  # Default value, likely not user-specified
+                    self.max_sources = recommended_source_count
+                    status_messages.append(f"💡 Recommended source count: {recommended_source_count} (based on query complexity)")
+        else:
+            # Use all provided queries - don't limit them
+            status_messages.append(f"📋 Using {len(queries)} provided queries")
+        
+        status_messages.append(f"⚙️ Configuration: {waves_total} wave(s), targeting up to {self.max_sources} sources")
+        status_messages.append("")
 
         # Generate trace ID
         trace_id = gen_trace_id()
@@ -619,8 +811,8 @@ class ResearchManager:
                 files_summaries = await self.process_uploaded_files(
                     uploaded_files, status_messages
                 )
-                self._merge_sources(files_summaries)
-                status_messages.append("📁 File processing completed.\n")
+                merged_files = self._merge_sources(files_summaries, max_total=self.max_sources)
+                status_messages.append(f"📁 File processing completed. Merged {merged_files} file source(s).\n")
                 yield ("", [], "\n\n".join(status_messages), None)
 
             # ----------- MULTI-WAVE SEARCH ----------
@@ -633,9 +825,33 @@ class ResearchManager:
                 wave_queries_count = len(queries)
                 all_queries_used.extend(queries)
                 
-                # Step 1 — Web search
+                # Calculate dynamic topk_per_query based on max_sources and remaining capacity
+                # Ensure we don't exceed max_sources across all queries
+                sources_already_discovered = len(self.source_index)
+                remaining_capacity = max(0, self.max_sources - sources_already_discovered)
+                
+                # Calculate topk per query: distribute remaining capacity across queries
+                # Use floor division to be conservative and ensure we don't exceed max_sources
+                max_results_per_query = None
+                if wave_queries_count > 0 and remaining_capacity > 0:
+                    # Calculate conservatively: floor division ensures we don't exceed
+                    calculated_topk = max(1, remaining_capacity // wave_queries_count)
+                    # Don't exceed the configured topk
+                    calculated_topk = min(calculated_topk, self.topk)
+                    if calculated_topk < self.topk:
+                        max_results_per_query = calculated_topk
+                        status_messages.append(f"ℹ️ Limiting to {calculated_topk} results per query to stay within {self.max_sources} total sources")
+                
+                # Show queries being executed for this wave
+                if wave == 1:
+                    status_messages.append(f"📝 Executing {wave_queries_count} search queries for this wave...")
+                else:
+                    status_messages.append(f"📝 Executing {wave_queries_count} follow-up queries for this wave...")
+                yield ("", [], "\n\n".join(status_messages), None)
+                
+                # Step 1 — Web search (pass max_results_per_query as parameter)
                 wave_sources, wave_query_summaries = await self.run_web_search(
-                    queries, status_messages
+                    queries, status_messages, max_results_per_query=max_results_per_query
                 )
                 
                 # Collect query-level summaries
@@ -644,44 +860,176 @@ class ResearchManager:
                 # Track sources discovered in this wave
                 wave_sources_count = len(wave_sources)
 
-                # Merge
-                self._merge_sources(wave_sources)
+                # Merge sources with max_sources limit (stops merging once limit is reached)
+                merged_count = self._merge_sources(wave_sources, max_total=self.max_sources)
                 
                 # Calculate wave duration
                 wave_duration = time.monotonic() - wave_start_time
-
-                status_messages.append(f"🧮 Total unique sources so far: {len(self.source_index)}")
-                yield ("", [], "\n\n".join(status_messages), None)
                 
-                # Record wave statistics
+                # Check if we've reached max_sources limit
+                current_total = len(self.source_index)
+                if current_total >= self.max_sources:
+                    status_messages.append(f"✅ Wave {wave} complete: Merged {merged_count} new sources in {wave_duration:.1f}s")
+                    status_messages.append(f"🧮 Total unique sources: {current_total} (reached limit of {self.max_sources})")
+                    yield ("", [], "\n\n".join(status_messages), None)
+                    # Stop searching if we've reached the limit
+                    status_messages.append(f"✔ Source limit reached. Ending search waves.\n")
+                    yield ("", [], "\n\n".join(status_messages), None)
+                    break
+                else:
+                    status_messages.append(f"✅ Wave {wave} complete: Merged {merged_count} new sources in {wave_duration:.1f}s")
+                    status_messages.append(f"🧮 Total unique sources so far: {current_total} (limit: {self.max_sources})")
+                    yield ("", [], "\n\n".join(status_messages), None)
+                
+                # Generate intermediate report for cross-wave comparison
+                # Only if we have enough sources (at least 3) to make it meaningful
+                current_report = None
+                text_added = None
+                text_rewritten = None
+                citations_added = None
+                quality_change = None
+                
+                if len(self.source_index) >= 3:
+                    try:
+                        # Prepare sources for intermediate report
+                        intermediate_sources = list(self.source_index.values())[:min(15, len(self.source_index))]
+                        filtered_intermediate = self._filter_top_sources(intermediate_sources, top_k=min(10, len(intermediate_sources)))
+                        
+                        # Format summaries for writer (simplified for intermediate reports)
+                        intermediate_summaries = _format_sources_for_writer(
+                            filtered_intermediate,
+                            max_summary_length=2000,
+                            enhance_titles=False
+                        )
+                        
+                        # Generate intermediate report
+                        intermediate_subtopics = self._extract_subtopic_themes(all_queries_used, topic=topic)
+                        if not intermediate_subtopics:
+                            intermediate_subtopics = [topic[:60]]
+                        
+                        query_summaries_text = "\n\n".join(all_query_summaries[:5]) if all_query_summaries else ""
+                        
+                        current_report = await self.writer.draft_async(
+                            topic=topic,
+                            subtopics=intermediate_subtopics[:5],
+                            summaries=intermediate_summaries[:10],
+                            sources=filtered_intermediate[:10],
+                            query_level_summaries=query_summaries_text[:1000] if query_summaries_text else "",
+                        )
+                        
+                        # Calculate deltas
+                        text_added, text_rewritten, citations_added, quality_change = _calculate_report_deltas(
+                            previous_report, current_report
+                        )
+                        
+                        # Update previous report for next wave
+                        previous_report = current_report
+                        
+                    except Exception as e:
+                        # If intermediate report generation fails, continue without it
+                        status_messages.append(f"⚠️ Could not generate intermediate report for wave {wave}: {e}")
+                
+                # Record wave statistics with cross-wave improvement metrics
                 wave_stats_list.append(
                     WaveStat(
                         wave_index=wave,
                         num_queries=wave_queries_count,
                         num_sources_discovered=wave_sources_count,
                         duration_seconds=wave_duration,
+                        wave_text_added=text_added,
+                        wave_text_rewritten=text_rewritten,
+                        wave_citations_added=citations_added,
+                        wave_quality_change_score=quality_change,
                     )
                 )
 
                 # Step 2 — Follow-Up Decision
+                status_messages.append(
+                    "🤔 Evaluating whether another research wave is needed based on current coverage and gaps..."
+                )
+                yield ("", [], "\n\n".join(status_messages), None)
+
                 # Build findings text for follow-up decision
-                findings_text = f"Topic: {topic}\n\nSources found: {len(self.source_index)}\n"
+                findings_sections: List[str] = []
+                findings_sections.append(f"Topic: {topic}")
+                findings_sections.append(f"Sources found: {len(self.source_index)}")
+
+                # Summaries of top sources discovered so far
+                source_lines = []
                 for i, src in enumerate(list(self.source_index.values())[:10], 1):
-                    findings_text += f"{i}. {src.title} - {src.snippet[:100]}...\n"
+                    source_lines.append(f"{i}. {src.title} - {src.snippet[:160]}...")
+                if source_lines:
+                    findings_sections.append("Recent sources (top 10):\n" + "\n".join(source_lines))
+
+                # Include prior queries so follow-up agent avoids duplicates
+                if all_queries_used:
+                    prior_query_lines = []
+                    for i, q in enumerate(all_queries_used[-20:], 1):
+                        prior_query_lines.append(f"{i}. {q}")
+                    findings_sections.append(
+                        "Previous queries already executed (avoid repeating unless narrowing a specific angle):\n"
+                        + "\n".join(prior_query_lines)
+                    )
+
+                findings_text = "\n\n".join(findings_sections) + "\n"
 
                 followup = await self.followup_agent.decide_async(
                     original_query=topic,
                     findings_text=findings_text,
                 )
 
+                # Dedupe follow-up queries against all prior queries
+                prev_queries_norm = {q.lower().strip() for q in all_queries_used if q}
+                new_followup_queries: List[str] = []
+                seen_followups: Set[str] = set()
+                dropped_prev = 0
+                dropped_internal = 0
+                for q in followup.queries or []:
+                    if not q:
+                        continue
+                    q_stripped = q.strip()
+                    if not q_stripped:
+                        continue
+                    q_norm = q_stripped.lower()
+                    if q_norm in prev_queries_norm:
+                        dropped_prev += 1
+                        continue
+                    if q_norm in seen_followups:
+                        dropped_internal += 1
+                        continue
+                    seen_followups.add(q_norm)
+                    new_followup_queries.append(q_stripped)
+
+                total_dropped = dropped_prev + dropped_internal
+                if total_dropped:
+                    details = []
+                    if dropped_prev:
+                        details.append(f"{dropped_prev} matched previous queries")
+                    if dropped_internal:
+                        details.append(f"{dropped_internal} were duplicates within follow-ups")
+                    status_messages.append(
+                        "ℹ️ Dropped "
+                        + " and ".join(details)
+                        + " from follow-up suggestions to avoid re-searching the same angle."
+                    )
+
+                if not new_followup_queries:
+                    status_messages.append(
+                        "✔ No genuinely new follow-up queries remained after deduplication. Ending search waves.\n"
+                    )
+                    yield ("", [], "\n\n".join(status_messages), None)
+                    break
+
                 if not followup.should_follow_up or wave == waves_total:
                     status_messages.append(f"✔ No more follow-ups required. Ending search waves.\n")
                     yield ("", [], "\n\n".join(status_messages), None)
                     break
 
-                queries = followup.queries[:self.num_searches]
+                queries = new_followup_queries
                 wave += 1
-                status_messages.append(f"🔄 Follow-up queries generated ({len(queries)})")
+                status_messages.append(
+                    f"🔄 Follow-up queries generated: using {len(queries)} new query(ies) (after dropping duplicates)."
+                )
                 yield ("", [], "\n\n".join(status_messages), None)
 
             # ----------- FINAL WRITING ----------
@@ -691,29 +1039,17 @@ class ResearchManager:
             all_sources_list = list(self.source_index.values())[:self.max_sources]
             
             # Filter and deduplicate sources before writing
-            filtered_sources = self._filter_top_sources(all_sources_list, top_k=15)
+            # Use max_sources for filtering, but ensure we don't exceed it
+            filter_top_k = min(self.max_sources, len(all_sources_list))
+            filtered_sources = self._filter_top_sources(all_sources_list, top_k=filter_top_k)
             status_messages.append(f"📝 Filtered to {len(filtered_sources)} unique sources (from {len(all_sources_list)})")
 
             # Format sources for writer - truncate long summaries and enhance titles
-            summaries = []
-            for src in filtered_sources:
-                # Use content (full detailed summary) if available, fallback to snippet
-                summary_text = src.content if src.content else (src.snippet or "")
-                # Truncate very long summaries (keep first 3000 chars + key points)
-                if len(summary_text) > 3000:
-                    # Try to preserve structure by keeping first part and last 200 chars
-                    summary_text = summary_text[:2800] + "... [truncated] ..." + summary_text[-200:]
-                
-                # Enhance title with context for better synthesis
-                title = src.title or "Untitled Source"
-                if len(title) < 40 and summary_text:
-                    # Extract key topic from summary for context
-                    summary_words = summary_text.split()[:8]
-                    if summary_words:
-                        topic_hint = " ".join(summary_words)
-                        title = f"{title} – {topic_hint[:50]}"
-                
-                summaries.append(f"Title: {title}\nURL: {src.url}\nSummary: {summary_text}")
+            summaries = _format_sources_for_writer(
+                filtered_sources,
+                max_summary_length=5000,
+                enhance_titles=True
+            )
 
             # Extract meaningful subtopic themes from queries for better report structure
             subtopic_themes = self._extract_subtopic_themes(all_queries_used, topic=topic)
@@ -737,8 +1073,8 @@ class ResearchManager:
             if all_query_summaries:
                 query_level_summaries_text = "\n\n".join(all_query_summaries)
                 # Limit query summaries to reasonable length
-                if len(query_level_summaries_text) > 2000:
-                    query_level_summaries_text = query_level_summaries_text[:1800] + "... [truncated]"
+                if len(query_level_summaries_text) > 5000:
+                    query_level_summaries_text = query_level_summaries_text[:4500] + "... [truncated]"
 
             # Estimate token count for final prompt and log if needed
             prompt_parts = [
@@ -762,6 +1098,29 @@ class ResearchManager:
                 sources=filtered_sources,
                 query_level_summaries=query_level_summaries_text,
             )
+            
+            # Calculate deltas for final report only if we haven't already calculated them
+            # (i.e., if the final report is different from the last intermediate report)
+            # The final report uses more sources, so it may have improvements
+            if previous_report is not None and len(wave_stats_list) > 0:
+                last_wave_stat = wave_stats_list[-1]
+                # Only recalculate if we haven't already calculated deltas for this wave
+                # or if the final report might be significantly different (uses more sources)
+                if last_wave_stat.wave_text_added is None:
+                    final_text_added, final_text_rewritten, final_citations_added, final_quality_change = _calculate_report_deltas(
+                        previous_report, final_report
+                    )
+                    # Update the last wave stat with final deltas
+                    wave_stats_list[-1] = WaveStat(
+                        wave_index=last_wave_stat.wave_index,
+                        num_queries=last_wave_stat.num_queries,
+                        num_sources_discovered=last_wave_stat.num_sources_discovered,
+                        duration_seconds=last_wave_stat.duration_seconds,
+                        wave_text_added=final_text_added,
+                        wave_text_rewritten=final_text_rewritten,
+                        wave_citations_added=final_citations_added,
+                        wave_quality_change_score=final_quality_change,
+                    )
             
             # Enhanced validation of structured output
             validation_issues = []
@@ -812,10 +1171,22 @@ class ResearchManager:
             id_to_source = {i+1: src for i, src in enumerate(filtered_sources)}
             md = render_markdown(final_report, source_index=id_to_source)
 
-            status_messages.append("📄 Report complete.\n")
-
             # Calculate total duration
             total_duration = time.monotonic() - start_time
+            
+            status_messages.append("📄 Report complete.\n")
+            status_messages.append("=" * 60)
+            status_messages.append(f"✅ Research Summary:")
+            status_messages.append(f"   • Total duration: {total_duration:.1f}s")
+            status_messages.append(f"   • Waves completed: {wave}")
+            status_messages.append(f"   • Queries executed: {self.metrics_queries_executed}")
+            status_messages.append(f"   • Sources discovered: {len(self.source_index)}")
+            status_messages.append(f"   • Sources used in report: {len(filtered_sources)}")
+            status_messages.append(f"   • Report sections: {len(final_report.sections)}")
+            if self.metrics_cache_hits + self.metrics_cache_misses > 0:
+                cache_rate = (self.metrics_cache_hits / (self.metrics_cache_hits + self.metrics_cache_misses)) * 100
+                status_messages.append(f"   • Cache hit rate: {cache_rate:.1f}%")
+            status_messages.append("=" * 60)
 
             # Build efficiency metrics
             total_queries = self.metrics_queries_executed
@@ -861,5 +1232,6 @@ class ResearchManager:
     # -----------------------------------------------------------
 
     async def generate_plan(self, topic: str) -> QueryResponse:
-        """Generate initial search plan with queries and thoughts."""
+        """Generate initial search plan with queries and thoughts.
+           Planner decides query count based on topic complexity,"""
         return await self.planner.generate_async(topic)

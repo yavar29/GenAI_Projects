@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import List, Optional
+import re
 
 from agents import Agent, ModelSettings, function_tool
 from openai import AsyncOpenAI
@@ -29,7 +30,7 @@ class WriterOutput(BaseModel):
     )
     sections: List[Section] = Field(
         default_factory=list,
-        description="List of sections with markdown summaries and inline [1] style citations.",
+        description="List of sections with markdown summaries and inline [1] style citations. Sections may optionally include subsections for hierarchical organization.",
     )
     notes: List[str] = Field(
         default_factory=list,
@@ -62,46 +63,127 @@ class WriterAgent:
             name="Writer",
             instructions=(
                 "You are a senior research analyst.\n\n"
+
                 "INPUT YOU GET:\n"
                 "- A user query.\n"
                 "- Optional planning hints (subtopics).\n"
                 "- A list of source summaries.\n"
                 "- A curated list of sources with numeric IDs [1], [2], etc.\n\n"
-                "YOUR JOB:\n"
+
+                "OVERALL GOAL:\n"
                 "- Write a comprehensive, detailed, long-form markdown report that thoroughly answers the query.\n"
-                "- Each section should be substantial (typically 200-400 words) with deep analysis, not brief summaries.\n"
-                "- Organize it into logical sections with H2/H3 headings.\n"
-                "- Use bullet lists or numbered lists whenever you enumerate items.\n"
-                "- Synthesize across multiple sources instead of summarizing them one by one.\n"
+                "- Adapt the structure and the angle of the report to the query type (e.g., comparison, how-to, concept explainer, case study).\n"
+                "- The report should feel like it was written by a thoughtful human analyst, not generated from a rigid template.\n\n"
+
+                "TITLE & INTRO:\n"
+                "- CRITICAL: The first section's summary MUST begin with an H1 title (starting with '# ') that rewrites the query into a proper, well-formatted title.\n"
+                "  - Do NOT simply repeat the raw query text verbatim, especially if it is informal, misspelled, or contains phrases like 'suggest how to', 'how to', 'tell me about', etc.\n"
+                "  - Transform informal queries into professional, descriptive titles.\n"
+                "  - Example: for query 'suggest how to become ai engineer', a good title is '# How to Become an AI Engineer: A Comprehensive Guide'.\n"
+                "  - Example: for query 'india vs paksitan', a good title is '# India and Pakistan: A Comparative Analysis'.\n"
+                "- The H1 report title MUST appear only at the very start of the first section's summary.\n"
+                "- Do NOT reuse the H1 title inside the 'title' field or repeat it as any H2/H3 heading.\n"
+                "- The first section's 'title' field should be a short label such as 'Introduction' or 'Overview', not the full report title.\n"
+                "- After the H1 title, write an introductory paragraph (3–6 sentences) that frames the topic, explains why it matters, and previews the structure of the report.\n\n"
+
+                "STRUCTURE (ADAPTIVE):\n"
+                "- Organize the report into logical sections with H2/H3 headings.\n"
+                "- Choose section titles that fit the query type (e.g., 'Historical Background', 'Current Capabilities', 'Economic Comparison', 'Case Studies', 'Risks & Opportunities').\n"
+                "- Do NOT hardcode a fixed structure. Instead, design the structure that best serves the specific query.\n"
+                "- When it naturally fits the topic, you may include concluding sections such as 'Implications', 'Recommendations', or 'Limitations & Open Questions', but only if they are useful and relevant.\n"
+                "- The JSON 'outline' field should list the main sections in order, but the markdown itself should not include headings like 'Table of Contents' or 'Outline'.\n"
+                "- Inside the markdown, do NOT create sections literally called 'Table of Contents' or 'Outline'.\n\n"
+
+                "SECTION DEPTH & INTERNAL STRUCTURE:\n"
+                "- Each major section should be substantial and feel complete.\n"
+                "- Within each section, follow a clear internal structure:\n"
+                "  1) Start with few sentences that state the main idea of the section in plain language.\n"
+                "  2) Then provide detailed evidence: specific numbers, dates, names, mechanisms, concrete examples, etc.\n"
+                "  3) Use bullet lists or numbered lists when enumerating factors, pros/cons, dimensions of comparison, or steps.\n"
+                "  4) Where helpful, you may include small markdown tables to summarize side-by-side metrics (e.g., GDP, troop counts, performance indicators etc.).\n"
+                "  5) End the section with few sentences that interpret what the evidence means in context and connect it back to the overall question.\n\n"
+                
+                "NESTED SUBTOPICS (SUBSECTIONS):\n"
+                "- When a section naturally breaks down into distinct subtopics, use the 'subsections' field to organize content hierarchically.\n"
+                "- Use subsections when:\n"
+                "  * A section covers multiple related but distinct aspects (e.g., 'Economic Impact' section with subsections: 'GDP Growth', 'Employment Trends', 'Trade Relations').\n"
+                "  * You need to compare multiple items within a section (e.g., 'Key Technologies' with subsections for each technology).\n"
+                "  * A section contains case studies, examples, or categories that deserve their own headings.\n"
+                "  * The content would benefit from clearer organization with intermediate headings.\n"
+                "- Each subsection should have:\n"
+                "  * A clear, descriptive title (e.g., 'Machine Learning Applications', 'Regulatory Challenges', 'Case Study: Company X').\n"
+                "  * Substantial content (typically 100-300 words) with specific facts, examples, and citations.\n"
+                "  * Bullet points or numbered lists when appropriate (e.g., for enumerating features, steps, or factors).\n"
+                "- The main section's 'summary' field should provide an introduction/overview, then subsections provide detailed breakdown.\n"
+                "- You can mix: some sections with subsections, and some without (flat structure). Choose based on what best serves the content.\n"
+                "- Do NOT force subsections if the section flows better as a single narrative. Use them only when they genuinely improve organization.\n\n"
+
+                "USE OF SOURCES & CROSS-SOURCE SYNTHESIS:\n"
+                "- You must synthesize across multiple sources instead of summarizing them one by one.\n"
                 "- Combine facts from multiple sources wherever possible to create cohesive analysis.\n"
-                "- Provide extensive detail: include specific numbers, dates, names, technical details, and concrete examples.\n"
-                "- Expand on implications, context, and connections between ideas.\n"
-                "- Use inline numeric citations like [1], [2][5] for specific factual claims.\n"
-                "- Provide one or two citations per key point. If multiple sources agree on a claim, cite them all (e.g., [1][3][5]).\n"
-                "- If sources conflict or present different perspectives, explicitly note the disagreement and explain the differing viewpoints.\n"
-                "- End with a comprehensive 'Practical implications' section and a detailed 'Limitations & open questions' section.\n\n"
+                "- If multiple sources agree on a claim, you may cite them together (e.g., [1][3][5]).\n"
+                "- If sources conflict or present different perspectives, explicitly note the disagreement and explain the differing viewpoints.\n\n"
+
+                "CITATIONS:\n"
+                "- Use inline numeric citations like [1], [2][5] for specific factual claims, but use them sparingly.\n"
+                "- In each paragraph, use at most 1–2 citation clusters. A single cluster like [1][4] at the *end of a sentence* is usually enough.\n"
+                "- Do NOT attach a citation after every number or phrase. If a sentence contains multiple related facts from the same sources, place one combined citation cluster at the end of the sentence.\n"
+                "- Always place inline citations at the end of the sentence, just before the final punctuation (e.g., '... in 2025.[1][4]').\n"
+                "- Never insert citations in the middle of a phrase, between a number and its unit, or between a currency symbol and the amount.\n"
+                "- Only use citation numbers that correspond to the numbered source list provided in the prompt.\n"
+                "- For each section, also populate the 'citations' field with the main source IDs used there; this section-level list is more important than exhaustive inline tagging.\n"
+                "- Do not invent citations; if there is no supporting source, either omit the claim or present it clearly as interpretation.\n\n"
+
+
                 "STYLE:\n"
-                "- Write in your own words; do NOT copy the summaries.\n"
-                "- Be thorough and detailed - aim for depth over brevity.\n"
-                "- Include specific examples, statistics, and technical details from sources.\n"
-                "- Link ideas between sections when helpful (e.g., 'This builds on the applications in section 2').\n"
-                "- Avoid very generic sentences; prefer concrete, specific statements with supporting evidence.\n"
-                "- Each section should feel complete and informative, not rushed or superficial.\n\n"
-                "OUTPUT FORMAT:\n"
-                "- Return a JSON object matching WriterOutput: {outline: [...], sections: [...], notes: [...]}.\n"
-                "- 'outline': bullet list of the main sections in order.\n"
-                "- 'sections': each item has a 'title', 'summary' (markdown), and optional 'citations'.\n"
-                "- 'notes': limitations, confidence, or follow-up research ideas.\n"
-                "Do NOT wrap the JSON in backticks or extra formatting."
+                "- Write in your own words; do NOT copy the summaries or source text verbatim.\n"
+                "- Aim for depth over brevity: detailed, specific, and analytical rather than generic.\n"
+                "- Prefer concrete, specific statements over vague generalities.\n"
+                "- Connect ideas between sections when helpful (e.g., 'This builds on the trends discussed in the previous section').\n"
+                "- Keep the tone clear, professional, and balanced. Avoid hype or sensational language.\n\n"
+
+                "OUTPUT FORMAT (IMPORTANT):\n"
+                "- You MUST return exactly one valid JSON object and nothing else (no markdown, no backticks, no commentary).\n"
+                "- The JSON must match WriterOutput with keys: \"outline\", \"sections\", and \"notes\".\n"
+                "- Example high-level shape (do NOT include comments):\n"
+                "  {\n"
+                "    \"outline\": [\"<section 1 title>\", \"<section 2 title>\", \"<section 3 title>\", ...],\n"
+                "    \"sections\": [\n"
+                "      {\n"
+                "        \"title\": \"<section title>\",\n"
+                "        \"summary\": \"<markdown content for this section with inline [1]-style citations>\",\n"
+                "        \"citations\": [1, 3, 5],\n"
+                "        \"subsections\": [\n"
+                "          {\n"
+                "            \"title\": \"<subsection title>\",\n"
+                "            \"content\": \"<markdown content for subsection with citations>\",\n"
+                "            \"citations\": [2, 4]\n"
+                "          }\n"
+                "        ]\n"
+                "      }\n"
+                "    ],\n"
+                "    \"notes\": [\"<limitation or confidence note>\", \"<suggestion for follow-up research>\"]\n"
+                "  }\n"
+                "- 'outline': a bullet-style list (as plain strings) describing the main sections of the report.\n"
+                "- 'sections': each item has a 'title', a 'summary' (markdown), optional 'citations', and optional 'subsections'.\n"
+                "  - 'summary': the main content/introduction for the section (markdown with inline numeric citations like [1][3]).\n"
+                "  - 'citations': a list of the main source IDs that support this section.\n"
+                "  - 'subsections' (optional): an array of objects with 'title', 'content' (markdown with citations), and 'citations'.\n"
+                "    * Use subsections when a section naturally breaks into distinct subtopics that benefit from their own headings.\n"
+                "    * Each subsection's 'content' can include paragraphs, bullet lists, numbered lists, or tables as needed.\n"
+                "- 'notes': list any limitations, confidence notes, or suggestions for follow-up research.\n"
+                "- Use double quotes for all JSON keys and string values.\n"
+                "- Do NOT wrap the JSON in backticks or extra formatting; return raw JSON only.\n"
             ),
             model=model,
             tools=[save_markdown],
             model_settings=ModelSettings(
                 temperature=0.3,
-                max_output_tokens=16000,  # Increased for more detailed, comprehensive reports
+                max_output_tokens=16000,
             ),
             output_type=WriterOutput,
         )
+
 
 
     # async entrypoint 
@@ -128,16 +210,12 @@ class WriterAgent:
         if not out.sections:
             raise ValueError("WriterAgent output missing sections. The model did not generate any report sections.")
         
-        # Validate section quality
-        if len(out.sections) < 2:
-            raise ValueError(f"WriterAgent generated too few sections ({len(out.sections)}). Expected at least 2 sections.")
-        
-        # Check for empty or very short sections
+        # Check for empty or very short sections (warn but don't fail - let LLM decide structure)
         empty_sections = [i for i, sec in enumerate(out.sections) if not sec.summary or len(sec.summary.strip()) < 30]
         if empty_sections:
             print(f"Warning: WriterAgent generated {len(empty_sections)} empty/short sections: {empty_sections}")
         
-        # Validate outline matches sections
+        # Validate outline matches sections (warn but don't fail)
         if out.outline and len(out.outline) != len(out.sections):
             print(f"Warning: Outline length ({len(out.outline)}) doesn't match sections ({len(out.sections)})")
 
@@ -163,15 +241,34 @@ def _build_prompt(
     """
     prompt = f"Query: {topic}\n\n"
     prompt += (
-        "You must generate a comprehensive, detailed, high-quality research report with an adaptive structure that fits this query type.\n"
-        "IMPORTANT: This report should be extensive and thorough. Each section must be substantial (200-400 words minimum) with:\n"
-        "- Deep analysis and detailed explanations\n"
-        "- Specific facts, numbers, dates, and technical details\n"
-        "- Multiple examples and concrete evidence\n"
-        "- Comprehensive coverage of all aspects mentioned in the query\n"
-        "- Rich context and background information\n"
-        "Do NOT write brief summaries. Write detailed, informative content that thoroughly explores each topic.\n"
+        "You must generate a comprehensive, detailed, high-quality research report with an adaptive structure "
+        "that fits this specific query.\n\n"
+        "GENERAL REQUIREMENTS:\n"
+        "- The report must be long-form and thorough, not a brief summary.\n"
+        "- Each major section should be substantial (typically 300–600 words or more) with deep analysis and detailed explanations.\n"
+        "- Include specific facts, numbers, dates, names, and technical details wherever available from the sources.\n"
+        "- Provide multiple examples and concrete evidence, not just abstract statements.\n"
+        "- Cover all major aspects implied by the query.\n"
+        "- CRITICAL: The first section's summary MUST start with an H1 title (format: '# Title Here') that transforms the raw query into a professional, well-formatted title.\n"
+        "  - Remove informal query prefixes like 'suggest how to', 'how to', 'tell me about', 'explain', 'what is', 'can you', 'please', etc.\n"
+        "  - Convert the query into a proper title case format suitable for a research report.\n"
+        "  - Do NOT simply echo the raw query wording - transform it into a polished title.\n\n"
     )
+
+    # Heuristic: tailor structure for comparison-style queries like "X vs Y"
+    lower_topic = topic.lower()
+    if " vs " in lower_topic or " vs. " in lower_topic or " versus " in lower_topic:
+        prompt += (
+            "STRUCTURE HINT (COMPARISON QUERY):\n"
+            "- This query appears to be a comparative 'X vs Y' question.\n"
+            "- Design a structure that makes the comparison explicit and easy to follow. For example:\n"
+            "  - Start with an overview that explains what is being compared and why it matters now.\n"
+            "  - Provide separate background sections for each side (e.g., history, baseline context).\n"
+            "  - Include at least one section that directly compares key dimensions side-by-side (e.g., military, economy, technology, diplomacy, or performance metrics).\n"
+            "  - Use bullet lists or tables to contrast metrics or attributes.\n"
+            "  - Conclude with a balanced comparative assessment that summarizes the main differences, areas of parity, and likely future trajectories.\n"
+            "- These are advisory hints; you should still adapt the final structure to best answer the actual query.\n\n"
+        )
 
     if subtopics:
         prompt += (
@@ -235,14 +332,19 @@ def _build_prompt(
         prompt += f"[{i}] {enhanced_title} ({kind}) | {snippet_text}\n"
 
     prompt += (
-        "\nUse ONLY the above sources for factual claims. "
-        "Cite as [1], [2][5] when multiple sources support a claim. "
-        "Do not invent citations.\n"
+        "\nUse ONLY the above numbered sources for factual claims.\n"
+        "- When you make concrete factual statements (e.g., specific figures, dates, or events), support them with citations, but do so sparingly.\n"
+        "- Prefer a single combined citation cluster (e.g., [1][4]) at the end of a sentence that contains multiple related facts, instead of tagging every number.\n"
+        "- Always place inline citations at the end of the sentence, just before the period or other final punctuation, not in the middle of phrases.\n"
+        "- In most paragraphs, 1–2 citation clusters are enough; do not over-cite.\n"
+        "- Do not invent citation numbers that are not listed here.\n"
+        "- Interpretive or high-level analytical statements can be left uncited or backed by one or two key sources.\n"
     )
+
     
     # Token guard: estimate and warn if prompt is too long
     estimated_tokens = _estimate_token_count(prompt)
-    if estimated_tokens > 12000:
+    if estimated_tokens > 20000:
         # Truncate summaries if prompt is too long
         prompt_parts = prompt.split("Source Summaries:\n")
         if len(prompt_parts) > 1:
@@ -252,15 +354,15 @@ def _build_prompt(
             
             # Keep only first 8 summaries if too long
             summary_lines = summaries_section.split("\n")
-            if len(summary_lines) > 8:
-                summaries_section = "\n".join(summary_lines[:8]) + "\n... [additional sources truncated]"
+            if len(summary_lines) > 20:
+                summaries_section = "\n".join(summary_lines[:20]) + "\n... [additional sources truncated]"
             
             prompt = base_prompt + "Source Summaries:\n" + summaries_section + sources_section
             estimated_tokens = _estimate_token_count(prompt)
     
     # Debug: log token count (can be removed in production)
-    if estimated_tokens > 10000:
-        print(f"⚠️ Writer prompt length: ~{estimated_tokens} tokens (target: <10k)")
+    if estimated_tokens > 20000:
+        print(f"⚠️ Writer prompt length: ~{estimated_tokens} tokens (target: <20k)")
 
     return prompt
 
@@ -271,33 +373,82 @@ def _writer_output_to_report(
 ) -> ResearchReport:
     """Convert WriterOutput from the agent into a ResearchReport.
 
-    - Ensures citations are a clean list[int] per section.
-    - Leaves extraction of [1] tokens from the text to ResearchManager post-processing.
+    - Derives a clean global title from the first section's H1 (if present).
+    - Strips that H1 from the section summary so it doesn't duplicate.
+    - Normalizes section titles (no leading '#' etc.).
+    - Ensures citations are a clean list[int] per section and subsection.
     """
+    from app.schemas.report import Subsection
+
+    derived_topic = topic
+
+    if out.sections:
+        first_sec = out.sections[0]
+
+        # Extract H1 from first summary for main title
+        if first_sec.summary:
+            raw_summary = first_sec.summary.lstrip()
+            lines = raw_summary.splitlines()
+            if lines:
+                m = re.match(r'^#\s+(.+)$', lines[0].strip())
+                if m:
+                    derived_topic = m.group(1).strip()
+                    remaining = "\n".join(lines[1:]).lstrip()
+                    first_sec.summary = remaining or ""
+
+        # Normalize section titles
+        for sec in out.sections:
+            if getattr(sec, "title", None):
+                clean_title = re.sub(r'^#+\s*', '', sec.title).strip()
+                sec.title = clean_title
+
+        # Rename first section if duplicate of title
+        if getattr(first_sec, "title", None) and derived_topic:
+            if first_sec.title.strip().lower() == derived_topic.strip().lower():
+                first_sec.title = "Introduction"
+
     fixed_sections: List[Section] = []
 
     for sec in out.sections:
         citation_ids: List[int] = []
-
         if sec.citations:
             for c in sec.citations:
                 try:
                     citation_ids.append(int(c))
                 except (ValueError, TypeError):
-                    # If it's a string/URL, ignore it; ResearchManager will
-                    # extract [1] style citations from the text later.
                     continue
+
+        fixed_subsections = None
+        if hasattr(sec, 'subsections') and sec.subsections:
+            fixed_subsections = []
+            for subsec in sec.subsections:
+                sub_citation_ids: List[int] = []
+                if hasattr(subsec, 'citations') and subsec.citations:
+                    for c in subsec.citations:
+                        try:
+                            sub_citation_ids.append(int(c))
+                        except (ValueError, TypeError):
+                            continue
+
+                fixed_subsections.append(
+                    Subsection(
+                        title=subsec.title,
+                        content=subsec.content,
+                        citations=sub_citation_ids,
+                    )
+                )
 
         fixed_sections.append(
             Section(
                 title=sec.title,
                 summary=sec.summary,
                 citations=citation_ids,
+                subsections=fixed_subsections,
             )
         )
 
     return ResearchReport(
-        topic=topic,
+        topic=derived_topic,
         outline=out.outline or [],
         sections=fixed_sections,
         sources=sources,

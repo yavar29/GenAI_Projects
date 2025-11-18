@@ -31,14 +31,24 @@ def create_analytics_tab(
 
     with gr.Tab("📊 Analytics") as tab:
         gr.Markdown(
-            "## 📊 Research Session Analytics\n"
-            "Visual breakdown of sources, coverage, citations, and process.\n"
-            "_(Run a research session, then populate `analytics_state` to see real data.)_"
+            """
+            ## 📊 Research Session Analytics
+            
+            Comprehensive visual breakdown of sources, coverage, citations, and research process efficiency.
+            
+            <div style='background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 1rem; border-radius: 8px; margin: 1rem 0; color: white; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);'>
+                <strong>💡 Tip:</strong> Run a research session to see detailed analytics and visualizations.
+            </div>
+            """
         )
 
         # ------------------- SESSION OVERVIEW -------------------
         with gr.Row():
-            overview_md = gr.Markdown(label="Overview")
+            overview_md = gr.Markdown(
+                label="📈 Session Overview",
+                elem_classes=["modern-card"],
+                value="<div style='background: #ffedd5; color: #334155; padding: 1rem; border-radius: 8px; border: 1px solid rgba(249, 115, 22, 0.2);'>No analytics available yet. Run a research session to see detailed analytics.</div>"
+            )
 
         # ------------------- TABS FOR SWIPE-LIKE UX -------------
         with gr.Tabs():
@@ -68,16 +78,19 @@ def create_analytics_tab(
                 cache_mgr = get_cache_manager()
                 cache_stats = cache_mgr.get_stats()
                 cache_info = (
-                    f"**Cache Statistics:**\n\n"
-                    f"- Total entries: {cache_stats['total_entries']}\n"
-                    f"- Valid entries: {cache_stats['valid_entries']}\n"
-                    f"- Expired entries: {cache_stats['expired_entries']}\n"
-                    f"- L1 (in-memory) entries: {cache_stats['l1_entries']}\n"
-                    f"- Cache size: {cache_stats['size_mb']} MB\n"
-                    f"- TTL: {cache_stats['ttl_hours']} hours\n"
+                    f"<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #000000 !important; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.3);'>"
+                    f"<h3 style='color: #000000 !important; margin-bottom: 0.5rem;'>💾 Cache Statistics</h3>"
+                    f"<ul style='color: #000000 !important; margin: 0; padding-left: 1.5rem;'>"
+                    f"<li style='color: #000000 !important;'>Total entries: <strong style='color: #000000 !important;'>{cache_stats['total_entries']}</strong></li>"
+                    f"<li style='color: #000000 !important;'>Valid entries: <strong style='color: #000000 !important;'>{cache_stats['valid_entries']}</strong></li>"
+                    f"<li style='color: #000000 !important;'>Expired entries: <strong style='color: #000000 !important;'>{cache_stats['expired_entries']}</strong></li>"
+                    f"<li style='color: #000000 !important;'>L1 (in-memory) entries: <strong style='color: #000000 !important;'>{cache_stats['l1_entries']}</strong></li>"
+                    f"<li style='color: #000000 !important;'>Cache size: <strong style='color: #000000 !important;'>{cache_stats['size_mb']} MB</strong></li>"
+                    f"<li style='color: #000000 !important;'>TTL: <strong style='color: #000000 !important;'>{cache_stats['ttl_hours']} hours</strong></li>"
+                    f"</ul></div>"
                 )
                 return (
-                    "No analytics available yet. Run a research session and populate analytics_state.",
+                    "<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #334155; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);'>No analytics available yet. Run a research session and populate analytics_state.</div>",
                     None,
                     None,
                     None,
@@ -85,7 +98,7 @@ def create_analytics_tab(
                     None,
                     None,
                     None,
-                    "No efficiency data.",
+                    "<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #334155; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);'>No efficiency data.</div>",
                     None,
                     cache_info,
                 )
@@ -93,11 +106,30 @@ def create_analytics_tab(
             # --- Overview ---
             ov = analytics.overview
             overview_text = (
-                f"**Topic:** {ov.topic}\n\n"
-                f"- Word count: **{ov.word_count}**\n"
-                f"- Sections: **{ov.num_sections}**\n"
-                f"- Sources: **{ov.num_sources}** "
-                f"(Web: {ov.num_web_sources}, File: {ov.num_file_sources})\n"
+                f"""
+                <div style='background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 1.5rem; border-radius: 12px; color: white; margin-bottom: 1rem; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);'>
+                    <h3 style='color: white; margin-bottom: 1rem; font-weight: 700;'>📊 Research Overview</h3>
+                    <p style='margin: 0.5rem 0; color: rgba(255,255,255,0.95);'><strong>Topic:</strong> {ov.topic}</p>
+                    <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-top: 1rem;'>
+                        <div style='background: rgba(255,255,255,0.25); padding: 1rem; border-radius: 8px; backdrop-filter: blur(10px);'>
+                            <div style='font-size: 0.875rem; opacity: 0.95; color: white;'>Word Count</div>
+                            <div style='font-size: 1.5rem; font-weight: 700; color: white;'>{ov.word_count:,}</div>
+                        </div>
+                        <div style='background: rgba(255,255,255,0.25); padding: 1rem; border-radius: 8px; backdrop-filter: blur(10px);'>
+                            <div style='font-size: 0.875rem; opacity: 0.95; color: white;'>Sections</div>
+                            <div style='font-size: 1.5rem; font-weight: 700; color: white;'>{ov.num_sections}</div>
+                        </div>
+                        <div style='background: rgba(255,255,255,0.25); padding: 1rem; border-radius: 8px; backdrop-filter: blur(10px);'>
+                            <div style='font-size: 0.875rem; opacity: 0.95; color: white;'>Total Sources</div>
+                            <div style='font-size: 1.5rem; font-weight: 700; color: white;'>{ov.num_sources}</div>
+                        </div>
+                        <div style='background: rgba(255,255,255,0.25); padding: 1rem; border-radius: 8px; backdrop-filter: blur(10px);'>
+                            <div style='font-size: 0.875rem; opacity: 0.95; color: white;'>Web / File</div>
+                            <div style='font-size: 1.5rem; font-weight: 700; color: white;'>{ov.num_web_sources} / {ov.num_file_sources}</div>
+                        </div>
+                    </div>
+                </div>
+                """
             )
 
             # --- Source Type Distribution ---
@@ -127,12 +159,24 @@ def create_analytics_tab(
             pub_fig = None
             df_pub = _df_from_list(analytics.publication_stats, ["bucket", "count"])
             if not df_pub.empty:
-                pub_fig = px.bar(
-                    df_pub,
-                    x="bucket",
-                    y="count",
-                    title="Publication Timeline",
-                )
+                # Filter out "Unknown" entries and only show if we have valid years
+                df_pub_filtered = df_pub[df_pub["bucket"] != "Unknown"]
+                if not df_pub_filtered.empty:
+                    # Sort by year (bucket) for proper timeline display
+                    # Convert to numeric for proper sorting, handling non-numeric gracefully
+                    df_pub_filtered = df_pub_filtered.copy()
+                    df_pub_filtered["year_num"] = pd.to_numeric(df_pub_filtered["bucket"], errors="coerce")
+                    df_pub_filtered = df_pub_filtered.dropna(subset=["year_num"])
+                    df_pub_filtered = df_pub_filtered.sort_values("year_num")
+                    
+                    if not df_pub_filtered.empty:
+                        pub_fig = px.bar(
+                            df_pub_filtered,
+                            x="bucket",
+                            y="count",
+                            title="Publication Timeline",
+                            labels={"bucket": "Year", "count": "Number of Sources"},
+                        )
 
             # --- Credibility Distribution ---
             cred_fig = None
@@ -186,7 +230,7 @@ def create_analytics_tab(
 
             # --- Waves Timeline & Efficiency ---
             waves_fig = None
-            eff_md = "No efficiency data."
+            eff_md = "<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #334155; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);'>No efficiency data.</div>"
 
             df_waves = _df_from_list(
                 analytics.wave_stats,
@@ -205,33 +249,46 @@ def create_analytics_tab(
                 eff = analytics.efficiency
                 if eff.cache_hit_rate is not None:
                     eff_md = (
-                        f"**Queries executed:** {eff.queries_executed}\n\n"
-                        f"- Total sources analyzed: {eff.total_sources_seen}\n"
-                        f"- Unique sources used in report: {eff.unique_sources_used}\n"
-                        f"- Cache hit rate: {round(eff.cache_hit_rate * 100, 1)}%\n"
-                        f"- Waves completed: {eff.waves_completed}\n"
-                        f"- Total duration: {round(eff.total_duration_seconds or 0, 1)} seconds\n"
+                        f"<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #000000 !important; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.3);'>"
+                        f"<h3 style='color: #000000 !important; margin-bottom: 0.5rem;'>⚡ Efficiency Metrics</h3>"
+                        f"<p style='color: #000000 !important;'><strong style='color: #000000 !important;'>Queries executed:</strong> {eff.queries_executed}</p>"
+                        f"<ul style='color: #000000 !important; margin: 0; padding-left: 1.5rem;'>"
+                        f"<li style='color: #000000 !important;'>Total sources analyzed: <strong style='color: #000000 !important;'>{eff.total_sources_seen}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Unique sources used in report: <strong style='color: #000000 !important;'>{eff.unique_sources_used}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Cache hit rate: <strong style='color: #000000 !important;'>{round(eff.cache_hit_rate * 100, 1)}%</strong></li>"
+                        f"<li style='color: #000000 !important;'>Waves completed: <strong style='color: #000000 !important;'>{eff.waves_completed}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Total duration: <strong style='color: #000000 !important;'>{round(eff.total_duration_seconds or 0, 1)} seconds</strong></li>"
+                        f"</ul></div>"
                     )
                 else:
                     eff_md = (
-                        f"**Queries executed:** {eff.queries_executed}\n\n"
-                        f"- Total sources analyzed: {eff.total_sources_seen}\n"
-                        f"- Unique sources used in report: {eff.unique_sources_used}\n"
-                        f"- Waves completed: {eff.waves_completed}\n"
+                        f"<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #000000 !important; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.3);'>"
+                        f"<h3 style='color: #000000 !important; margin-bottom: 0.5rem;'>⚡ Efficiency Metrics</h3>"
+                        f"<p style='color: #000000 !important;'><strong style='color: #000000 !important;'>Queries executed:</strong> {eff.queries_executed}</p>"
+                        f"<ul style='color: #000000 !important; margin: 0; padding-left: 1.5rem;'>"
+                        f"<li style='color: #000000 !important;'>Total sources analyzed: <strong style='color: #000000 !important;'>{eff.total_sources_seen}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Unique sources used in report: <strong style='color: #000000 !important;'>{eff.unique_sources_used}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Waves completed: <strong style='color: #000000 !important;'>{eff.waves_completed}</strong></li>"
+                        f"</ul></div>"
                     )
+            else:
+                eff_md = "<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #334155; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);'>No efficiency data.</div>"
             
             # Get cache statistics
             cache_mgr = get_cache_manager()
             cache_stats = cache_mgr.get_stats()
             cache_info = (
-                f"**Cache Statistics:**\n\n"
-                f"- Total entries: {cache_stats['total_entries']}\n"
-                f"- Valid entries: {cache_stats['valid_entries']}\n"
-                f"- Expired entries: {cache_stats['expired_entries']}\n"
-                f"- L1 (in-memory) entries: {cache_stats['l1_entries']}\n"
-                f"- Cache size: {cache_stats['size_mb']} MB\n"
-                f"- TTL: {cache_stats['ttl_hours']} hours\n"
-                f"- Max entries: {cache_stats['max_rows']}\n"
+                f"<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #000000 !important; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.3);'>"
+                f"<h3 style='color: #000000 !important; margin-bottom: 0.5rem;'>💾 Cache Statistics</h3>"
+                f"<ul style='color: #000000 !important; margin: 0; padding-left: 1.5rem;'>"
+                f"<li style='color: #000000 !important;'>Total entries: <strong style='color: #000000 !important;'>{cache_stats['total_entries']}</strong></li>"
+                f"<li style='color: #000000 !important;'>Valid entries: <strong style='color: #000000 !important;'>{cache_stats['valid_entries']}</strong></li>"
+                f"<li style='color: #000000 !important;'>Expired entries: <strong style='color: #000000 !important;'>{cache_stats['expired_entries']}</strong></li>"
+                f"<li style='color: #000000 !important;'>L1 (in-memory) entries: <strong style='color: #000000 !important;'>{cache_stats['l1_entries']}</strong></li>"
+                f"<li style='color: #000000 !important;'>Cache size: <strong style='color: #000000 !important;'>{cache_stats['size_mb']} MB</strong></li>"
+                f"<li style='color: #000000 !important;'>TTL: <strong style='color: #000000 !important;'>{cache_stats['ttl_hours']} hours</strong></li>"
+                f"<li style='color: #000000 !important;'>Max entries: <strong style='color: #000000 !important;'>{cache_stats['max_rows']}</strong></li>"
+                f"</ul></div>"
             )
 
             return (
@@ -274,13 +331,16 @@ def create_analytics_tab(
             if cache_stats['total_entries'] > 0:
                 return gr.update(
                     value=(
-                        f"**Cache Statistics:**\n\n"
-                        f"- Total entries: {cache_stats['total_entries']}\n"
-                        f"- Valid entries: {cache_stats['valid_entries']}\n"
-                        f"- Expired entries: {cache_stats['expired_entries']}\n"
-                        f"- L1 (in-memory) entries: {cache_stats['l1_entries']}\n"
-                        f"- Cache size: {cache_stats['size_mb']} MB\n"
-                        f"- TTL: {cache_stats['ttl_hours']} hours\n"
+                        f"<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #000000 !important; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.3);'>"
+                        f"<h3 style='color: #000000 !important; margin-bottom: 0.5rem;'>💾 Cache Statistics</h3>"
+                        f"<ul style='color: #000000 !important; margin: 0; padding-left: 1.5rem;'>"
+                        f"<li style='color: #000000 !important;'>Total entries: <strong style='color: #000000 !important;'>{cache_stats['total_entries']}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Valid entries: <strong style='color: #000000 !important;'>{cache_stats['valid_entries']}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Expired entries: <strong style='color: #000000 !important;'>{cache_stats['expired_entries']}</strong></li>"
+                        f"<li style='color: #000000 !important;'>L1 (in-memory) entries: <strong style='color: #000000 !important;'>{cache_stats['l1_entries']}</strong></li>"
+                        f"<li style='color: #000000 !important;'>Cache size: <strong style='color: #000000 !important;'>{cache_stats['size_mb']} MB</strong></li>"
+                        f"<li style='color: #000000 !important;'>TTL: <strong style='color: #000000 !important;'>{cache_stats['ttl_hours']} hours</strong></li>"
+                        f"</ul></div>"
                     ),
                     visible=True
                 )

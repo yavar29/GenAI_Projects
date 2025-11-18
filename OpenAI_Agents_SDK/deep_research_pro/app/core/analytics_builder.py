@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import List, Optional, Dict
+import re
 
 from collections import Counter
 
@@ -49,17 +50,31 @@ def _extract_domain(url: str) -> Optional[str]:
 
 def _bucket_publication_date(published: Optional[str]) -> str:
     """
-    Very lightweight bucketing:
-    - If we can extract a 4-digit year, use that year (e.g., '2022').
-    - Otherwise, return 'Unknown'.
+    Extract year from publication date string.
+    Handles various formats:
+    - "2025-06-04"
+    - "May 14, 2025"
+    - "Jun 09, 2025"
+    - "14 May 2025"
+    - "2025"
+    - etc.
+    
+    Returns the year as a string (e.g., '2025') or 'Unknown' if no year found.
     """
     if not published:
         return "Unknown"
-    # Look for a 4-digit year in the string
-    for token in published.split("-"):
-        token = token.strip()
-        if len(token) == 4 and token.isdigit():
-            return token
+    
+    # Use regex to find any 4-digit year (1900-2099)
+    # Look for years that are reasonable (1900-2099)
+    year_pattern = r'\b(19\d{2}|20[0-9]{2})\b'
+    matches = re.findall(year_pattern, str(published))
+    
+    if matches:
+        # Return the first (most likely) year found
+        # If multiple years, prefer the most recent one
+        years = [int(m) for m in matches]
+        return str(max(years))  # Return the most recent year
+    
     return "Unknown"
 
 

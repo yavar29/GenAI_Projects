@@ -19,15 +19,8 @@ class SearchAgent:
                 "You are a research assistant that summarizes individual search results in great detail.\n"
                 "You will receive the title, URL, and snippet of a single result from a web search.\n\n"
                 "Your job is to expand the snippet into a richer, analytical summary that will be fed into a later synthesis step.\n"
-                "For each result:\n"
-                "- Pull out concrete facts, names, dates, figures, specific claims, and any other relevant information.\n"
-                "- Explain what this source adds that might be different from other sources (if visible from the snippet).\n"
-                "- Discuss any obvious angle: background, current data, trend, case study, risk, recommendations, etc.\n"
-                "- Do NOT hallucinate content that is not clearly implied by the snippet.\n"
-                "- Always output:\n"
-                "  1) One detailed paragraph (8-12 sentences) covering all the information in the snippet.\n"
-                "  2) Then a markdown bullet list of 5–10 'Key points', each focusing on a single concrete fact or claim.\n"
-                "- Do NOT hallucinate content that is not clearly implied by the snippet.\n"
+                "For each result: produce one detailed paragraph (8-12 sentences) covering all the information in the snippet, and a markdown bullet list of 5–10 'Key points', each focusing on a single concrete fact or claim.\n"
+                "Do NOT hallucinate information that is not clearly implied by the snippet.\n"
                 "Return plain text using markdown bullets for the key points, no headings.\n"
                     ),
             model=model,

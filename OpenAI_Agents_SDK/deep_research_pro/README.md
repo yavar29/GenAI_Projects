@@ -14,7 +14,7 @@ A multi-agent research co-pilot that plans research strategies, searches the web
 
 3. **Structured Output Validation with Pydantic Schemas**: Built type-safe data pipelines using Pydantic models for all agent outputs (QueryResponse, FollowUpDecisionResponse, ResearchReport, Section, SourceDoc), implementing robust validation logic with automatic retry mechanisms, fallback strategies, section quality checks, and comprehensive error handling for reliable JSON schema compliance.
 
-4. **Cross-Source Synthesis with Advanced Prompt Engineering**: Engineered sophisticated prompt templates enabling GPT-4o to synthesize information across multiple sources, detect contradictions, combine agreeing sources with multi-citation support ([1][2][3]), generate comprehensive 2000-5000 word research reports with adaptive section structures, and include query-level summaries for better context integration.
+4. **Cross-Source Synthesis with Advanced Prompt Engineering**: Engineered sophisticated prompt templates enabling GPT-4o to synthesize information across multiple sources, detect contradictions, combine agreeing sources with multi-citation support ([1][2][3]), generate comprehensive 2000-5000 word research reports with adaptive section structures (including nested subsections for hierarchical organization), and include query-level summaries for better context integration.
 
 5. **Real-Time Streaming UI with Analytics Dashboard**: Developed an interactive Gradio-based web interface with live status streaming, integrated analytics tracking (cache hit rates, query efficiency, wave statistics, source usage), Plotly visualizations for metrics, interactive Q&A capabilities using a dedicated ReportQAAgent, and real-time progress updates with auto-scrolling.
 
@@ -38,7 +38,7 @@ A multi-agent research co-pilot that plans research strategies, searches the web
 
 15. **User-Guided Query Planning**: Implemented query review and editing interface with Dataframe support, query extraction from multiple formats (list of strings, list of lists, pandas DataFrame), query normalization and validation, and approval/skip workflows for user control.
 
-16. **Export Functionality**: Built Markdown export with full citations and references, HTML export with styled citations, file download capabilities, and proper formatting preservation for both formats.
+16. **Export Functionality**: Built Markdown, HTML, and PDF export with full citations and references, plain clickable citations (no background highlighting), collapsible References section, and proper formatting preservation for all formats.
 
 17. **Error Handling and Resilience**: Implemented comprehensive exception handling throughout the pipeline, safe async execution wrappers with error recovery, graceful degradation for failed operations, and detailed error logging with traceback information.
 
@@ -66,10 +66,12 @@ A multi-agent research co-pilot that plans research strategies, searches the web
 - **Two-Level Caching**: Fast in-memory cache + persistent SQLite disk cache (survives restarts)
 - **Concurrency Guardrails**: Bounded parallelism for safe operation on Hugging Face Spaces
 - **Parallel Search Execution**: Fast, concurrent web searches with query-level summaries
-- **Adaptive Reports**: Long-form reports with adaptive outlines and inline citations
+- **Adaptive Reports**: Long-form reports with adaptive outlines, nested subsections, and inline citations
+- **Intelligent Source Limits**: AI automatically recommends optimal source count based on query complexity
 - **Structured Outputs**: Pydantic schemas for type-safe data
-- **Interactive UI**: Gradio-based web interface with real-time Live Log streaming
-- **Export Formats**: Markdown export with full citations
+- **Interactive UI**: Modern Gradio-based web interface with real-time Live Log streaming
+- **Export Formats**: Markdown, HTML, and PDF export with full citations
+- **Test Mode**: Fake data generator for UI testing without API costs
 
 ## 🚀 Quick Start
 
@@ -142,10 +144,10 @@ uv run drp --topic "Climate Change Solutions"
 **Web UI Options:**
 - **Mode**: Choose "Smart" for LLM-powered planning or "Fast" for quick heuristic planning
 - **Number of Searches**: Set how many search queries to execute (3-10, default: 5)
-- **Max Sources**: Limit total unique sources returned (5-20, default: 8)
-- **Max Waves**: Maximum number of research waves including follow-ups (1-3, default: 3)
-- **Show Outline**: Preview the report outline before final synthesis
+- **Max Source Limit (Optional)**: Maximum number of sources to include. Leave at default (25) to let AI decide based on query complexity, or set explicitly for cost/time control (5-100, default: 25)
+- **Max Waves**: Maximum number of research waves including follow-ups (1-3, default: 2)
 - **Query Editing**: Review and edit AI-generated search queries before execution
+- **Test Mode**: Enable fake data generation for UI testing without API calls
 
 **CLI Options:**
 ```bash
@@ -240,7 +242,7 @@ uv run drp --topic "Quantum Computing" --output quantum_research.md
 │              REPORT GENERATION                                  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Source Filtering & Preparation                          │  │
-│  │  • Filter to top 15 unique sources (by content richness) │  │
+│  │  • Filter to recommended count (or user-specified limit)│  │
 │  │  • Extract subtopic themes from queries                  │  │
 │  │  • Prepare query-level summaries                        │  │
 │  │  • Enhance source titles with context                    │  │
@@ -252,17 +254,17 @@ uv run drp --topic "Quantum Computing" --output quantum_research.md
 │  │  • Cross-source synthesis instructions                  │  │
 │  │  • Generates structured JSON output:                    │  │
 │  │    - Outline (section list)                             │  │
-│  │    - Sections (title, summary, citations)              │  │
+│  │    - Sections (title, summary, citations, subsections) │  │
 │  │    - Notes (limitations, next steps)                    │  │
-│  │  • Validates output quality                              │  │
+│  │  • Validates output quality (flexible, LLM decides)     │  │
 │  │  • Retries with simplified prompt if needed             │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                              ↓                                  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Report Rendering                                        │  │
-│  │  • Convert to Markdown with styled citations             │  │
-│  │  • Generate References section                           │  │
-│  │  • Export to HTML (optional)                            │  │
+│  │  • Convert to Markdown with plain clickable citations   │  │
+│  │  • Generate collapsible References section               │  │
+│  │  • Export to Markdown, HTML, and PDF                    │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────────────┬──────────────────────────────────┘
                               │
@@ -280,11 +282,11 @@ uv run drp --topic "Quantum Computing" --output quantum_research.md
 ### Key Components
 
 **Agents:**
-- **QueryGeneratorAgent**: Generates diverse search queries covering multiple research angles
+- **QueryGeneratorAgent**: Generates diverse search queries covering multiple research angles and recommends optimal source count based on query complexity
 - **FileSummarizerAgent**: Processes uploaded documents with semantic chunking and parallel summarization
 - **SearchAgent**: Summarizes individual search results into detailed analytical summaries
 - **FollowUpDecisionAgent**: Decides if additional research waves are needed
-- **WriterAgent**: Synthesizes sources into structured, cited research reports
+- **WriterAgent**: Synthesizes sources into structured, cited research reports with support for nested subsections
 - **ReportQAAgent**: Answers follow-up questions about generated reports
 
 **Core Systems:**
@@ -329,9 +331,11 @@ uv run drp --topic "Quantum Computing" --output quantum_research.md
 
 5. **Adaptive Reports**: Long-form reports with intelligent structure
    - Adaptive outlines based on query intent
+   - Nested subsections for hierarchical organization when appropriate
    - Comprehensive depth (typically 2000-5000 words)
    - Deterministic numeric citations [1], [2], [3]
-   - Programmatically generated References section
+   - Programmatically generated References section (collapsible dropdown)
+   - Export to Markdown, HTML, and PDF formats
 
 6. **Real-Time Live Log**: Streaming status updates
    - Step-by-step progress tracking
@@ -342,6 +346,15 @@ uv run drp --topic "Quantum Computing" --output quantum_research.md
 7. **Structured Outputs**: Type-safe Pydantic schemas for reliable data handling
 
 8. **Parallel Search**: Fast, concurrent web searches with query-level summaries
+
+9. **Intelligent Source Limits**: AI automatically analyzes query complexity and recommends optimal source count
+   - Simple queries (basic definitions): 10-15 sources
+   - Moderate queries (explanations, how-to): 20-30 sources
+   - Complex queries (comparisons, deep dives): 35-50 sources
+   - Very complex queries (multi-dimensional): 50+ sources
+   - User can override for cost/time control
+
+10. **Nested Subsections**: Reports can include hierarchical subsections within main sections for better organization
 
 ## 📦 Project Structure
 

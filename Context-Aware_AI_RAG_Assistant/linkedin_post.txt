@@ -1,0 +1,30 @@
+Just wrapped up something I've been building quietly for a while — a Context-Aware AI Assistant that represents your professional persona and answers questions about your background, projects, and skills in a natural, consistent way.
+
+The idea was to move beyond generic chatbots and create something personal, context-aware, and easy to extend. I wanted a system that anyone could build on — using minimal dependencies and avoiding heavy orchestration frameworks like full LangChain chains or CrewAI. The architecture is modular and focused on clean, extensible code.
+
+Here's what makes it work:
+
+Custom RAG pipeline using OpenAI embeddings (text-embedding-3-small) and FAISS for semantic retrieval with persistent on-disk vector storage
+
+Dynamic knowledge base that reads Markdown, TXT, and PDF files with character-based chunking using RecursiveCharacterTextSplitter for optimal boundary handling
+
+Persona switching between Professional, Mentor, Technical, and Casual modes — implemented with JSON-based configuration and dynamic prompt templating
+
+Contextual reasoning via GPT-4 function calling for precise, first-person answers grounded in your knowledge base with strict anti-hallucination policies
+
+Private KB integration with Hugging Face Datasets for secure knowledge storage — the Space stays public while personal data stays private
+
+Clean Gradio UI deployed publicly on Hugging Face Spaces with Python 3.12+ and minimal dependencies (gradio, openai, faiss-cpu, langchain-text-splitters, langchain-community)
+
+Technical stack: Python 3.12+ • OpenAI API (GPT-4) • FAISS vector store • LangChain utilities (text splitters, document loaders) • Gradio 5.33 • Modular architecture
+
+Every part of it — from RAG setup to deployment — is explained in a detailed README, making it easy for anyone to adapt and build their own personal assistant.
+
+If you've been exploring RAG systems, contextual reasoning, or model orchestration, this could be a good place to start experimenting.
+
+GitHub: github.com/yavar29/GenAI_Projects/tree/main/Context-Aware_AI_RAG_Assistant
+
+Live Demo: huggingface.co/spaces/yavar29/Career_Conversation
+
+Would love to hear your thoughts — what features would you add next?
+

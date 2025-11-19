@@ -1,18 +1,12 @@
 # app/core/analytics_builder.py
 
 from __future__ import annotations
-
 from typing import List, Optional, Dict
 import re
-
 from collections import Counter
-
 from urllib.parse import urlparse
-
 from app.schemas.report import ResearchReport
-
 from app.schemas.source import SourceDoc
-
 from app.schemas.analytics import (
     AnalyticsPayload,
     SessionOverview,
@@ -77,7 +71,7 @@ def _bucket_publication_date(published: Optional[str]) -> str:
     
     return "Unknown"
 
-
+# credibility score can be improved by using more advanced algorithms and data sources based on the domain, source type, and publication date.
 def _score_credibility(url: str, source_type: str, published: Optional[str] = None) -> int:
     """
     Enhanced credibility scoring based on domain, source type, and publication date.
@@ -148,7 +142,7 @@ def _score_credibility(url: str, source_type: str, published: Optional[str] = No
         # Check if it's a known reputable org
         if any(od in domain_clean for od in org_domains):
             return 4
-        # Generic .org gets 3, but we'll check below
+       
     
     # ========== SCORE 3: Medium Credibility ==========
     # Commercial domains - check for known reputable commercial sites

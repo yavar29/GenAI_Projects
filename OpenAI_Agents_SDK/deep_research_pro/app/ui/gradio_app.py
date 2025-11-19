@@ -24,7 +24,6 @@ from app.core.research_manager import ResearchManager
 from app.agents.report_qa_agent import ReportQAAgent
 from app.schemas.analytics import AnalyticsPayload
 from app.ui.analytics_dashboard import create_analytics_tab
-from app.ui.test_data import generate_fake_research_stream, generate_fake_sources, generate_fake_report
 from app.ui.styles import get_css
 
 # Ensure OPENAI_API_KEY is in environment for Agents SDK
@@ -88,7 +87,6 @@ async def run_research_stream(
     num_sources: int,
     num_waves: int,
     uploaded_files: list,
-    test_mode: bool = False,
 ):
     """
     Async generator → streamed output to Gradio.
@@ -109,27 +107,6 @@ async def run_research_stream(
     
     if not queries:
         yield ("", "❌ Please provide at least one search query.", None)
-        return
-    
-    # TEST MODE: Use fake data generator
-    if test_mode:
-        async for result in generate_fake_research_stream(
-            topic=topic,
-            queries=queries,
-        num_sources=num_sources,
-            num_waves=num_waves,
-            uploaded_files=uploaded_files,
-        ):
-            report_md, status_text, analytics = result
-            
-            # Trim log to prevent excessive growth
-            status_text = _truncate_message(status_text, max_chars=8000)
-            status_text = _trim_log(status_text, max_lines=400)
-            
-            # Add auto-scroll anchor
-            status_text += '\n\n<a href="#end"> </a><div id="end"></div>'
-            
-            yield (report_md, status_text, analytics)
         return
 
     # Save uploaded files to disk
@@ -178,53 +155,12 @@ async def run_research_stream(
 # Callback: Generate Search Plan
 # -------------------------------------------------------------
 
-async def generate_plan_callback(topic: str, num_sources: int, test_mode: bool = False):
+async def generate_plan_callback(topic: str, num_sources: int):
     """
     Generate search plan (queries) for user review.
     """
     if not topic or topic.strip() == "":
         return None, None, "❌ Please enter a topic.", gr.update(visible=False)
-    
-    # TEST MODE: Generate fake plan
-    if test_mode:
-        fake_queries = [
-            f"{topic}: Overview and Introduction",
-            f"{topic}: Current Trends and Developments",
-            f"{topic}: Key Challenges and Solutions",
-            f"{topic}: Future Outlook and Predictions",
-            f"{topic}: Case Studies and Examples",
-        ]
-        
-        fake_thoughts = f"""
-## Planning Thoughts (Test Mode)
-
-I've generated {len(fake_queries)} search queries to comprehensively cover the topic of **{topic}**.
-
-### Query Strategy:
-1. **Overview Query**: Provides foundational understanding
-2. **Current Trends**: Captures recent developments
-3. **Challenges**: Identifies key problems and solutions
-4. **Future Outlook**: Explores predictions and trends
-5. **Case Studies**: Includes practical examples
-
-### Expected Sources:
-- Academic papers and research articles
-- Industry reports and whitepapers
-- News articles and blog posts
-- Government and institutional publications
-
-**Note**: This is test mode - no API calls are being made.
-"""
-        
-        df = [[q] for q in fake_queries]
-        status = f"✅ Generated {len(df)} search queries (TEST MODE). Review and edit them below, then click 'Approve & Start Research'."
-        
-        return (
-            df,                         # Query table
-            fake_thoughts,              # Planner Thoughts
-            status,                     # Status
-            gr.update(visible=True)     # Show query editor
-        )
     
     try:
         manager = ResearchManager(
@@ -356,7 +292,6 @@ async def start_research_callback(
     num_sources: int,
     num_waves: int,
     files: list,
-    test_mode: bool = False,
 ):
     """
     Start the main research pipeline.
@@ -374,7 +309,6 @@ async def start_research_callback(
         num_sources,
         num_waves,
         files or [],
-        test_mode=test_mode,
     ):
         yield result
 
@@ -448,12 +382,6 @@ def create_interface():
         )
         
         with gr.Accordion("Advanced Options", open=False):
-            test_mode = gr.Checkbox(
-                label="🧪 Test Mode (No API Calls)",
-                value=False,
-                info="Enable to test the UI with fake data without making API calls that cost money"
-            )
-            
             num_sources = gr.Slider(
                 minimum=5,
                 maximum=100,
@@ -630,7 +558,7 @@ def create_interface():
         # --- Event Handlers ---
         
         # Auto-generate plan when topic changes
-        async def handle_topic_change(topic, num_sources, test_mode):
+        async def handle_topic_change(topic, num_sources):
             """Auto-generate plan when topic is entered."""
             if not topic or not topic.strip():
                 return (
@@ -642,7 +570,7 @@ def create_interface():
                 )
             
             try:
-                queries, thoughts, status, visibility = await generate_plan_callback(topic, num_sources, test_mode)
+                queries, thoughts, status, visibility = await generate_plan_callback(topic, num_sources)
                 queries_df = [[q] for q in queries] if queries else []
                 return (
                     gr.update(visible=True),
@@ -663,19 +591,13 @@ def create_interface():
         # Auto-generate plan when topic or settings change
         topic_input.change(
             fn=handle_topic_change,
-            inputs=[topic_input, num_sources, test_mode],
+            inputs=[topic_input, num_sources],
             outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
         )
         
         num_sources.change(
             fn=handle_topic_change,
-            inputs=[topic_input, num_sources, test_mode],
-            outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
-        )
-        
-        test_mode.change(
-            fn=handle_topic_change,
-            inputs=[topic_input, num_sources, test_mode],
+            inputs=[topic_input, num_sources],
             outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
         )
         
@@ -712,7 +634,7 @@ def create_interface():
             # Filter out empty queries
             return [q for q in queries if q]
         
-        async def start_research_with_queries(topic, queries_df, num_sources, max_waves, files, test_mode):
+        async def start_research_with_queries(topic, queries_df, num_sources, max_waves, files):
             """Extract queries and start research."""
             queries = extract_queries_from_df(queries_df)
             
@@ -728,17 +650,13 @@ def create_interface():
                 "Live updates are streaming in the Log panel. Your final report will appear here once the research completes."
             )
             
-            # Add test mode indicator
-            if test_mode:
-                status_msg += "🧪 TEST MODE: Using fake data (no API calls)\n\n"
-            
             status_msg += "🚀 Starting research with your approved queries..."
             yield (placeholder_report, status_msg, None)
             status_msg = ""
             
             # Start research with queries from the table
             first_yield = False
-            async for result in run_research_stream(topic, queries, num_sources, max_waves, files or [], test_mode=test_mode):
+            async for result in run_research_stream(topic, queries, num_sources, max_waves, files or []):
                 # Prepend status message to first status update if queries were capped
                 if first_yield and status_msg:
                     report_md, status, analytics = result
@@ -752,7 +670,7 @@ def create_interface():
         
         approve_btn.click(
             fn=start_research_with_queries,
-            inputs=[topic_input, query_inputs, num_sources, max_waves, file_upload, test_mode],
+            inputs=[topic_input, query_inputs, num_sources, max_waves, file_upload],
             outputs=[report_display, live_log, analytics_state]
         )
         

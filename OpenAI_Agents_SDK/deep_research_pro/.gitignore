@@ -43,9 +43,16 @@ env/
 Thumbs.db
 
 # Project specific
+# Data directories and files
 data/
+uploaded_files/
 *.sqlite3
+*.sqlite
 *.db
+
+# Exported reports (generated files)
+data/exported_report.*
+exported_report.*
 
 # Logs
 *.log

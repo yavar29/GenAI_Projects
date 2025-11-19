@@ -54,7 +54,7 @@ class WriterAgent:
 
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: str = "gpt-4o-mini",
         openai_client: Optional[AsyncOpenAI] = None,
     ) -> None:
         _ = openai_client
@@ -125,14 +125,19 @@ class WriterAgent:
                 "- If sources conflict or present different perspectives, explicitly note the disagreement and explain the differing viewpoints.\n\n"
 
                 "CITATIONS:\n"
-                "- Use inline numeric citations like [1], [2][5] for specific factual claims, but use them sparingly.\n"
-                "- In each paragraph, use at most 1–2 citation clusters. A single cluster like [1][4] at the *end of a sentence* is usually enough.\n"
-                "- Do NOT attach a citation after every number or phrase. If a sentence contains multiple related facts from the same sources, place one combined citation cluster at the end of the sentence.\n"
-                "- Always place inline citations at the end of the sentence, just before the final punctuation (e.g., '... in 2025.[1][4]').\n"
-                "- Never insert citations in the middle of a phrase, between a number and its unit, or between a currency symbol and the amount.\n"
-                "- Only use citation numbers that correspond to the numbered source list provided in the prompt.\n"
-                "- For each section, also populate the 'citations' field with the main source IDs used there; this section-level list is more important than exhaustive inline tagging.\n"
-                "- Do not invent citations; if there is no supporting source, either omit the claim or present it clearly as interpretation.\n\n"
+                "- Use inline numeric citations like [1], [2][5] ONLY for factual claims that need source attribution.\n"
+                "- Place citations at the END of sentences, just before the final punctuation (e.g., '... in 2025.[1][4]').\n"
+                "- NEVER use citation brackets [ ] for:\n"
+                "  * Product names or versions (e.g., write 'WeatherNext 2' not 'WeatherNext-[2]')\n"
+                "  * Measurements or quantities (e.g., write '15 days' not '[15] days', '0.25 degrees' not '0.25[°]')\n"
+                "  * Numbers that are part of names, dates, or technical specifications\n"
+                "- Citations should ONLY appear as [1], [2], [3] etc. at sentence endings to reference sources.\n"
+                "- Use citations sparingly: 1–2 citation clusters per paragraph is usually enough.\n"
+                "- Only use citation numbers that exist in the numbered source list provided.\n"
+                "- CRITICAL: Each source in the numbered list appears only once. Do NOT cite the same source multiple times with different numbers.\n"
+                "- If you need to reference the same source multiple times in different sections, use the same citation number consistently.\n"
+                "- For each section, populate the 'citations' field with the main source IDs used there (avoid listing the same ID multiple times).\n"
+                "- Do not invent citations; if there is no supporting source, omit the citation.\n\n"
 
 
                 "STYLE:\n"
@@ -179,7 +184,7 @@ class WriterAgent:
             tools=[save_markdown],
             model_settings=ModelSettings(
                 temperature=0.3,
-                max_output_tokens=16000,
+                max_output_tokens=8000,
             ),
             output_type=WriterOutput,
         )
@@ -333,11 +338,15 @@ def _build_prompt(
 
     prompt += (
         "\nUse ONLY the above numbered sources for factual claims.\n"
-        "- When you make concrete factual statements (e.g., specific figures, dates, or events), support them with citations, but do so sparingly.\n"
-        "- Prefer a single combined citation cluster (e.g., [1][4]) at the end of a sentence that contains multiple related facts, instead of tagging every number.\n"
-        "- Always place inline citations at the end of the sentence, just before the period or other final punctuation, not in the middle of phrases.\n"
-        "- In most paragraphs, 1–2 citation clusters are enough; do not over-cite.\n"
+        "- When you make concrete factual statements, support them with citations at the END of sentences only.\n"
+        "- NEVER use citation brackets [ ] for product names, versions, measurements, or quantities.\n"
+        "- Examples of what NOT to cite: 'WeatherNext 2' (product name), '15 days' (measurement), '0.25 degrees' (quantity).\n"
+        "- Citations [1], [2], [3] should ONLY appear at sentence endings to reference sources.\n"
+        "- Use 1–2 citation clusters per paragraph; do not over-cite.\n"
         "- Do not invent citation numbers that are not listed here.\n"
+        "- CRITICAL: Each source in the numbered list above appears only once. Each number [1], [2], [3], etc. refers to a unique, distinct source.\n"
+        "- Do NOT cite the same source multiple times with different numbers. If you reference the same source in different sections, use the same citation number consistently.\n"
+        "- The sources list has already been deduplicated, so there are no duplicate sources with different numbers.\n"
         "- Interpretive or high-level analytical statements can be left uncited or backed by one or two key sources.\n"
     )
 

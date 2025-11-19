@@ -25,6 +25,7 @@ from app.agents.report_qa_agent import ReportQAAgent
 from app.schemas.analytics import AnalyticsPayload
 from app.ui.analytics_dashboard import create_analytics_tab
 from app.ui.test_data import generate_fake_research_stream, generate_fake_sources, generate_fake_report
+from app.ui.styles import get_css
 
 # Ensure OPENAI_API_KEY is in environment for Agents SDK
 # The SDK reads from os.environ, not just from dotenv
@@ -91,10 +92,10 @@ async def run_research_stream(
 ):
     """
     Async generator → streamed output to Gradio.
-    Yields: (report_md, sources_data, status_text, analytics)
+    Yields: (report_md, status_text, analytics)
     """
     if not topic or topic.strip() == "":
-        yield ("", [], "❌ Please provide a research topic.", None)
+        yield ("", "❌ Please provide a research topic.", None)
         return
 
     # Filter out empty queries
@@ -107,19 +108,19 @@ async def run_research_stream(
         queries = [str(q).strip() for q in queries if q and str(q).strip()]
     
     if not queries:
-        yield ("", [], "❌ Please provide at least one search query.", None)
+        yield ("", "❌ Please provide at least one search query.", None)
         return
-
+    
     # TEST MODE: Use fake data generator
     if test_mode:
         async for result in generate_fake_research_stream(
             topic=topic,
             queries=queries,
-            num_sources=num_sources,
+        num_sources=num_sources,
             num_waves=num_waves,
             uploaded_files=uploaded_files,
         ):
-            report_md, sources_data, status_text, analytics = result
+            report_md, status_text, analytics = result
             
             # Trim log to prevent excessive growth
             status_text = _truncate_message(status_text, max_chars=8000)
@@ -128,7 +129,7 @@ async def run_research_stream(
             # Add auto-scroll anchor
             status_text += '\n\n<a href="#end"> </a><div id="end"></div>'
             
-            yield (report_md, sources_data, status_text, analytics)
+            yield (report_md, status_text, analytics)
         return
 
     # Save uploaded files to disk
@@ -137,7 +138,7 @@ async def run_research_stream(
         try:
             uploaded_paths = save_uploads(uploaded_files)
         except Exception as e:
-            yield ("", [], f"❌ Error saving uploaded files: {e}", None)
+            yield ("", f"❌ Error saving uploaded files: {e}", None)
             return
 
     # Initialize ResearchManager
@@ -150,7 +151,7 @@ async def run_research_stream(
             num_sources=num_sources,  # For backward compatibility
         )
     except Exception as ex:
-        yield ("", [], f"❌ Failed to initialize ResearchManager: {ex}", None)
+        yield ("", f"❌ Failed to initialize ResearchManager: {ex}", None)
         return
 
     # Run research pipeline
@@ -160,7 +161,7 @@ async def run_research_stream(
             queries=queries,
             uploaded_files=uploaded_paths if uploaded_paths else None,
         ):
-            report_md, sources_data, status_text, analytics = result
+            report_md, status_text, analytics = result
             
             # Trim log to prevent excessive growth
             status_text = _truncate_message(status_text, max_chars=8000)
@@ -169,9 +170,9 @@ async def run_research_stream(
             # Add auto-scroll anchor
             status_text += '\n\n<a href="#end"> </a><div id="end"></div>'
             
-            yield (report_md, sources_data, status_text, analytics)
+            yield (report_md, status_text, analytics)
     except Exception as e:
-        yield ("", [], f"❌ Error during research: {str(e)}", None)
+        yield ("", f"❌ Error during research: {str(e)}", None)
 
 # -------------------------------------------------------------
 # Callback: Generate Search Plan
@@ -255,50 +256,56 @@ I've generated {len(fake_queries)} search queries to comprehensively cover the t
 # Callback: Q&A on top of the final report
 # -------------------------------------------------------------
 
-def _sources_table_to_text(sources_table) -> str:
+def _extract_sources_from_report(report_md: str) -> str:
     """
-    Convert the sources dataframe/list into a plain-text list with numeric IDs
-    that the Q&A agent can cite as [1], [2], ...
+    Extract sources from the References section of the report markdown.
+    Returns a plain-text list with numeric IDs that the Q&A agent can cite as [1], [2], ...
     """
-    # Handle None or empty list first
-    if sources_table is None:
+    if not report_md:
         return "No sources were provided."
     
-    # Handle possible pandas DataFrame
-    rows = sources_table
-    try:
-        import pandas as pd
-        if isinstance(sources_table, pd.DataFrame):
-            if sources_table.empty:
-                return "No sources were provided."
-            rows = sources_table.values.tolist()
-    except (ImportError, AttributeError):
-        pass
+    import re
     
-    # Check if rows is empty (for list case)
-    if not rows or len(rows) == 0:
+    # Look for the References section (collapsible details)
+    # Pattern: <details>...<summary>References</summary>...references...</details>
+    refs_pattern = r'<details>.*?<summary>.*?References.*?</summary>(.*?)</details>'
+    match = re.search(refs_pattern, report_md, re.DOTALL | re.IGNORECASE)
+    
+    if not match:
+        # Try markdown format: ## References
+        refs_pattern = r'##\s+References\s*\n(.*?)(?=\n##|\Z)'
+        match = re.search(refs_pattern, report_md, re.DOTALL | re.IGNORECASE)
+    
+    if not match:
         return "No sources were provided."
-
+    
+    refs_content = match.group(1)
+    
+    # Extract individual references
+    # Pattern: [id] Title or [id] <a href="url">Title</a>
+    ref_pattern = r'\[(\d+)\]\s*(?:<a[^>]*>)?([^<]+)(?:</a>)?'
+    matches = re.findall(ref_pattern, refs_content)
+    
+    if not matches:
+        return "No sources were provided."
+    
     lines = []
-    for i, row in enumerate(rows, 1):
-        # Expect shape: [Title, URL, Type]
-        if not row:
-            continue
-        title = str(row[0]) if len(row) > 0 else ""
-        url = str(row[1]) if len(row) > 1 else ""
-        source_type = str(row[2]) if len(row) > 2 else ""
-        lines.append(f"[{i}] ({source_type}) {title} | {url}")
+    for ref_id, title in matches:
+        title = title.strip()
+        if title:
+            lines.append(f"[{ref_id}] {title}")
+    
     return "\n".join(lines) if lines else "No sources were provided."
 
 
 async def qa_answer_callback(
     question: str,
     report_md: str,
-    sources_table,
     chat_history: list,
 ):
     """
-    Answer a user question based on the current report and sources.
+    Answer a user question based on the current report.
+    Sources are extracted from the References section of the report.
     Returns updated chat history and clears the question box.
     """
     # Normalize history
@@ -318,8 +325,8 @@ async def qa_answer_callback(
         )
         return chat_history, ""
 
-    # Prepare sources text
-    sources_text = _sources_table_to_text(sources_table)
+    # Extract sources from the References section of the report
+    sources_text = _extract_sources_from_report(report_md)
 
     # Instantiate Q&A agent
     qa_agent = ReportQAAgent(openai_client=make_async_client())
@@ -398,462 +405,8 @@ def create_interface():
             header_image_base64 = base64.b64encode(img_data).decode('utf-8')
             header_image_url = f"data:image/png;base64,{header_image_base64}"
     
-    # Build CSS with background image URL (using placeholder replacement)
-    css_template = """
-        /* Background Image - 123.jpeg */
-        body {
-            background-image: url('__BG_IMAGE_URL__') !important;
-            background-size: cover !important;
-            background-position: center center !important;
-            background-attachment: fixed !important;
-            background-repeat: no-repeat !important;
-            min-height: 100vh !important;
-        }
-        
-        /* Ensure background is visible */
-        #root {
-            background: transparent !important;
-        }
-        
-        /* Make sure body shows the background */
-        body {
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-        
-        /* Overlay for readability - one shade lighter than header */
-        .gradio-container {
-            background: rgba(60, 60, 70, 0.95) !important;
-            backdrop-filter: blur(10px) !important;
-            border-radius: 20px !important;
-            padding: 2rem !important;
-            margin: 2rem auto !important;
-            max-width: 1400px !important;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
-            border: 1px solid rgba(80, 80, 90, 0.3);
-        }
-        
-        /* Hero Header with dark background and image */
-        .gradio-container > div:first-child {
-            background: linear-gradient(135deg, #2d2d35 0%, #1f1f28 100%) !important;
-            padding: 3rem 2.5rem !important;
-            border-radius: 16px !important;
-            margin: -2rem -2rem 2rem -2rem !important;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
-            display: flex !important;
-            align-items: center !important;
-            gap: 3rem !important;
-            flex-wrap: wrap !important;
-        }
-        
-        /* Header image container - much bigger */
-        .header-image-container {
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .header-image-container img {
-            max-width: 250px;
-            max-height: 250px;
-            width: auto;
-            height: auto;
-            border-radius: 16px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-            object-fit: contain;
-        }
-        
-        /* Header text container */
-        .header-text-container {
-            flex: 1;
-            min-width: 300px;
-        }
-        
-        .gradio-container > div:first-child h1 {
-            color: #ffffff !important;
-            font-size: 4rem !important;
-            font-weight: 900 !important;
-            margin: 0 !important;
-            letter-spacing: -0.03em !important;
-            line-height: 1.1 !important;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif !important;
-            text-align: left !important;
-        }
-        
-        .gradio-container > div:first-child h3 {
-            color: rgba(255, 255, 255, 0.9) !important;
-            font-size: 1.75rem !important;
-            font-weight: 500 !important;
-            margin: 1rem 0 0 0 !important;
-            text-align: left !important;
-        }
-        
-        .gradio-container > div:first-child p {
-            color: rgba(255, 255, 255, 0.85) !important;
-            font-size: 1.15rem !important;
-            margin-top: 1.5rem !important;
-            text-align: left !important;
-            line-height: 1.6 !important;
-        }
-        #live-log {
-            max-height: 600px;
-            overflow-y: auto;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 12px;
-            background: #f9fafb !important;
-            color: #111827 !important;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-            font-size: 0.9rem;
-            line-height: 1.5;
-        }
-        #live-log * {
-            color: #111827 !important;
-        }
-        /* Report Display - Professional Document Box */
-        .report-markdown {
-            background: white !important;
-            border: 2px solid rgba(249, 115, 22, 0.2) !important;
-            border-radius: 16px !important;
-            padding: 3rem 2.5rem !important;
-            margin: 1.5rem 0 !important;
-            box-shadow: 0 8px 24px rgba(249, 115, 22, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08) !important;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Inter', 'Helvetica Neue', Arial, sans-serif !important;
-            line-height: 1.8 !important;
-            color: #1e293b !important;
-            max-width: 100% !important;
-        }
-        
-        /* Report Typography */
-        .report-markdown h1 {
-            font-size: 2.5rem !important;
-            font-weight: 700 !important;
-            color: #1e293b !important;
-            margin-top: 0 !important;
-            margin-bottom: 1.5rem !important;
-            padding-bottom: 1rem !important;
-            border-bottom: 3px solid #f97316 !important;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-            letter-spacing: -0.02em !important;
-        }
-        
-        .report-markdown h2 {
-            font-size: 1.875rem !important;
-            font-weight: 600 !important;
-            color: #1e293b !important;
-            margin-top: 2.5rem !important;
-            margin-bottom: 1.25rem !important;
-            padding-bottom: 0.75rem !important;
-            border-bottom: 2px solid rgba(249, 115, 22, 0.2) !important;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-        }
-        
-        .report-markdown h3 {
-            font-size: 1.5rem !important;
-            font-weight: 600 !important;
-            color: #334155 !important;
-            margin-top: 2rem !important;
-            margin-bottom: 1rem !important;
-        }
-        
-        .report-markdown p {
-            font-size: 1.0625rem !important;
-            line-height: 1.85 !important;
-            color: #334155 !important;
-            margin-bottom: 1.25rem !important;
-            text-align: justify !important;
-        }
-        
-        .report-markdown ul, .report-markdown ol {
-            margin: 1.25rem 0 !important;
-            padding-left: 2rem !important;
-            color: #334155 !important;
-        }
-        
-        .report-markdown li {
-            margin-bottom: 0.75rem !important;
-            line-height: 1.75 !important;
-            color: #334155 !important;
-        }
-        
-        .report-markdown strong {
-            font-weight: 600 !important;
-            color: #1e293b !important;
-        }
-        
-        .report-markdown em {
-            font-style: italic !important;
-            color: #475569 !important;
-        }
-        
-        /* Table of Contents Styling */
-        .report-markdown h2 + ul {
-            background: #fff7ed !important;
-            border: 1px solid rgba(249, 115, 22, 0.15) !important;
-            border-radius: 8px !important;
-            padding: 1.5rem !important;
-            margin: 1.5rem 0 !important;
-        }
-        
-        .report-markdown ul li a[href^="#"] {
-            color: #ea580c !important;
-            text-decoration: none !important;
-            font-weight: 500 !important;
-            transition: color 0.2s ease !important;
-        }
-        
-        .report-markdown ul li a[href^="#"]:hover {
-            color: #f97316 !important;
-            text-decoration: underline !important;
-        }
-        
-        /* Citation Links - Plain text style, no background, but clickable */
-        .report-markdown a[href] {
-            display: inline;
-            padding: 0;
-            margin: 0;
-            background-color: transparent !important;
-            border: none !important;
-            border-radius: 0;
-            color: inherit !important;
-            text-decoration: none;
-            font-size: inherit;
-            font-weight: inherit;
-            transition: color 0.2s ease;
-        }
-        .report-markdown a[href]:hover {
-            background-color: transparent !important;
-            border: none !important;
-            color: #ea580c !important;
-            text-decoration: underline;
-            transform: none;
-        }
-        /* Only style non-citation links (like in references) */
-        .report-markdown p[id^="ref-"] a[href] {
-            color: #ea580c !important;
-            text-decoration: underline;
-        }
-        .report-markdown p[id^="ref-"] a[href]:hover {
-            color: #f97316 !important;
-        }
-        
-        /* Code blocks */
-        .report-markdown code {
-            background: #fff7ed !important;
-            color: #ea580c !important;
-            padding: 0.2rem 0.5rem !important;
-            border-radius: 4px !important;
-            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace !important;
-            font-size: 0.9em !important;
-            border: 1px solid rgba(249, 115, 22, 0.2) !important;
-        }
-        
-        .report-markdown pre {
-            background: #fff7ed !important;
-            border: 1px solid rgba(249, 115, 22, 0.2) !important;
-            border-radius: 8px !important;
-            padding: 1.25rem !important;
-            overflow-x: auto !important;
-            margin: 1.5rem 0 !important;
-        }
-        
-        .report-markdown pre code {
-            background: transparent !important;
-            border: none !important;
-            padding: 0 !important;
-        }
-        
-        /* Tables */
-        .report-markdown table {
-            width: 100% !important;
-            border-collapse: collapse !important;
-            margin: 1.5rem 0 !important;
-            background: white !important;
-            border-radius: 8px !important;
-            overflow: hidden !important;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
-        }
-        
-        .report-markdown th {
-            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important;
-            color: white !important;
-            padding: 1rem !important;
-            text-align: left !important;
-            font-weight: 600 !important;
-            font-size: 0.95rem !important;
-        }
-        
-        .report-markdown td {
-            padding: 0.875rem 1rem !important;
-            border-bottom: 1px solid rgba(249, 115, 22, 0.1) !important;
-            color: #334155 !important;
-        }
-        
-        .report-markdown tr:hover {
-            background: #fff7ed !important;
-        }
-        
-        /* Blockquotes */
-        .report-markdown blockquote {
-            border-left: 4px solid #f97316 !important;
-            padding-left: 1.5rem !important;
-            margin: 1.5rem 0 !important;
-            color: #475569 !important;
-            font-style: italic !important;
-            background: #fff7ed !important;
-            padding: 1rem 1.5rem !important;
-            border-radius: 0 8px 8px 0 !important;
-        }
-        
-        /* Horizontal rules */
-        .report-markdown hr {
-            border: none !important;
-            border-top: 2px solid rgba(249, 115, 22, 0.2) !important;
-            margin: 2.5rem 0 !important;
-        }
-        
-        /* References dropdown section */
-        .report-markdown details {
-            margin: 2rem 0 !important;
-            padding: 1rem 0 !important;
-            border-top: 2px solid rgba(249, 115, 22, 0.2) !important;
-        }
-        
-        .report-markdown details summary {
-            cursor: pointer;
-            padding: 0.75rem 0 !important;
-            font-weight: 600;
-            color: #1e293b !important;
-            user-select: none;
-            list-style: none;
-        }
-        
-        .report-markdown details summary::-webkit-details-marker {
-            display: none;
-        }
-        
-        .report-markdown details summary::before {
-            content: "▶ ";
-            display: inline-block;
-            margin-right: 0.5rem;
-            transition: transform 0.2s ease;
-            color: #f97316;
-        }
-        
-        .report-markdown details[open] summary::before {
-            transform: rotate(90deg);
-        }
-        
-        .report-markdown details summary h2 {
-            display: inline !important;
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-        
-        .report-markdown details p[id^="ref-"] {
-            padding: 0.75rem 0 !important;
-            border-bottom: 1px solid rgba(249, 115, 22, 0.1) !important;
-            margin: 0 !important;
-        }
-        
-        .report-markdown details p[id^="ref-"]:last-of-type {
-            border-bottom: none !important;
-        }
-        /* Plan section - add padding to prevent content from touching borders */
-        .plan-section {
-            padding: 1.5rem !important;
-            background: rgba(255, 255, 255, 0.8) !important;
-            border-radius: 12px !important;
-            backdrop-filter: blur(5px) !important;
-        }
-        .plan-section .dataframe,
-        .plan-section .gr-df {
-            margin: 1rem 0 !important;
-            padding: 0.5rem !important;
-        }
-        
-        /* Cards and sections with better visibility */
-        .gr-group,
-        .gr-accordion,
-        .gr-tab {
-            background: rgba(255, 255, 255, 0.9) !important;
-            backdrop-filter: blur(5px) !important;
-            border-radius: 12px !important;
-            padding: 1.5rem !important;
-            margin: 1rem 0 !important;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
-        }
-        
-        /* Input fields with better visibility */
-        .gr-textbox,
-        .gr-textarea,
-        .gr-slider {
-            background: rgba(255, 255, 255, 0.95) !important;
-            border: 2px solid rgba(249, 115, 22, 0.3) !important;
-            border-radius: 8px !important;
-            color: #1e293b !important;
-        }
-        
-        .gr-textbox:focus,
-        .gr-textarea:focus {
-            border-color: #f97316 !important;
-            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.2) !important;
-        }
-        
-        /* Labels and text inside container - light colors for dark background */
-        .gradio-container label,
-        .gradio-container .gr-label,
-        .gradio-container .gr-markdown,
-        .gradio-container p:not(.report-markdown p),
-        .gradio-container span:not(.report-markdown span) {
-            color: rgba(255, 255, 255, 0.9) !important;
-        }
-        
-        /* Ensure input text is dark */
-        .gr-textbox input,
-        .gr-textarea textarea {
-            color: #1e293b !important;
-        }
-        
-        /* Buttons with better styling */
-        .gr-button {
-            border-radius: 8px !important;
-            font-weight: 600 !important;
-            transition: all 0.3s ease !important;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
-        }
-        
-        .gr-button:hover {
-            transform: translateY(-2px) !important;
-            box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3) !important;
-        }
-        
-        /* Tabs with better styling */
-        .gr-tabs {
-            background: rgba(255, 255, 255, 0.95) !important;
-            border-radius: 12px !important;
-            padding: 1rem !important;
-            margin: 1rem 0 !important;
-        }
-        
-        /* Live log with better visibility */
-        #live-log {
-            background: rgba(255, 255, 255, 0.95) !important;
-            backdrop-filter: blur(5px) !important;
-            border: 2px solid rgba(249, 115, 22, 0.2) !important;
-        }
-        
-        /* File upload area */
-        .gr-file {
-            background: rgba(255, 255, 255, 0.9) !important;
-            border-radius: 12px !important;
-            padding: 1.5rem !important;
-        }
-        """
-    
-    # Replace placeholder with actual background image URL
-    css_content = css_template.replace('__BG_IMAGE_URL__', bg_image_url)
+    # Get CSS from styles module
+    css_content = get_css(bg_image_url)
     
     with gr.Blocks(
         title="Deep Research Pro",
@@ -866,7 +419,7 @@ def create_interface():
             with gr.Row():
                 # Header image - much bigger
                 if header_image_url:
-                    with gr.Column(scale=0, min_width=280):
+                    with gr.Column(scale=0, min_width=420):
                         gr.HTML(
                             f"""
                             <div class="header-image-container">
@@ -887,13 +440,12 @@ def create_interface():
                         """
                     )
         
-        with gr.Row():
-            topic_input = gr.Textbox(
-                label="Research Topic",
-                placeholder="e.g., AI in Healthcare, Climate Change Solutions, Quantum Computing",
-                value="AI in Healthcare",
-                lines=2,
-            )
+        topic_input = gr.Textbox(
+            label="Research Topic",
+            placeholder="e.g., AI in Healthcare, Climate Change Solutions, Quantum Computing",
+            value="AI in Healthcare",
+            lines=2,
+        )
         
         with gr.Accordion("Advanced Options", open=False):
             test_mode = gr.Checkbox(
@@ -901,7 +453,6 @@ def create_interface():
                 value=False,
                 info="Enable to test the UI with fake data without making API calls that cost money"
             )
-            
             
             num_sources = gr.Slider(
                 minimum=5,
@@ -1018,12 +569,26 @@ def create_interface():
                         return gr.File(value=str(path.resolve()), visible=True)
                     except ImportError as e:
                         # Return error message if weasyprint is not installed
+                        error_msg = "❌ PDF export requires weasyprint. Install with: pip install weasyprint"
+                        print(error_msg)
+                        print(f"Details: {e}")
+                        return gr.File(visible=False)
+                    except OSError as e:
+                        # Handle missing system libraries (libpango, libcairo, etc.)
+                        error_msg = str(e)
+                        print("❌ PDF Export Error - Missing System Libraries")
+                        print(error_msg)
+                        # Show user-friendly message
+                        if "libpango" in error_msg or "libcairo" in error_msg:
+                            print("\n💡 To fix on macOS:")
+                            print("   brew install pango cairo gdk-pixbuf libffi")
+                            print("   pip install --upgrade --force-reinstall weasyprint")
                         return gr.File(visible=False)
                     except Exception as e:
                         # Log error but don't crash
                         import traceback
-                        print(f"PDF export error: {e}")
-                        print(traceback.format_exc())
+                        print(f"❌ PDF export error: {e}")
+                        traceback.print_exc()
                         return gr.File(visible=False)
                 
                 export_md_btn.click(
@@ -1037,18 +602,11 @@ def create_interface():
                     inputs=[report_display],
                     outputs=[export_html_file]
                 )
-                
+            
                 export_pdf_btn.click(
                     fn=export_pdf,
                     inputs=[report_display],
                     outputs=[export_pdf_file]
-                )
-            
-            with gr.Tab("📚 Sources"):
-                sources_table = gr.Dataframe(
-                    headers=["Title", "URL", "Type"],
-                    label="Sources",
-                    interactive=False,
                 )
             
             # 📊 Analytics tab
@@ -1160,7 +718,7 @@ def create_interface():
             
             # Empty queries guard - show friendly error
             if not queries:
-                yield ("", [], "❌ Please provide at least one search query. All queries are empty.", None)
+                yield ("", "❌ Please provide at least one search query. All queries are empty.", None)
                 return
             
             # Use all provided queries from the table
@@ -1175,7 +733,7 @@ def create_interface():
                 status_msg += "🧪 TEST MODE: Using fake data (no API calls)\n\n"
             
             status_msg += "🚀 Starting research with your approved queries..."
-            yield (placeholder_report, [], status_msg, None)
+            yield (placeholder_report, status_msg, None)
             status_msg = ""
             
             # Start research with queries from the table
@@ -1183,10 +741,10 @@ def create_interface():
             async for result in run_research_stream(topic, queries, num_sources, max_waves, files or [], test_mode=test_mode):
                 # Prepend status message to first status update if queries were capped
                 if first_yield and status_msg:
-                    report_md, sources_data, status, analytics = result
+                    report_md, status, analytics = result
                     if status:
                         status = status_msg + status
-                    yield (report_md, sources_data, status, analytics)
+                    yield (report_md, status, analytics)
                     first_yield = False
                 else:
                     yield result
@@ -1195,22 +753,22 @@ def create_interface():
         approve_btn.click(
             fn=start_research_with_queries,
             inputs=[topic_input, query_inputs, num_sources, max_waves, file_upload, test_mode],
-            outputs=[report_display, sources_table, live_log, analytics_state]
+            outputs=[report_display, live_log, analytics_state]
         )
         
         # --- Q&A Handlers ---
         
-        # Ask button → use current report + sources + chat history
+        # Ask button → use current report + chat history (sources extracted from report)
         qa_ask_btn.click(
             fn=qa_answer_callback,
-            inputs=[qa_question, report_display, sources_table, qa_chat],
+            inputs=[qa_question, report_display, qa_chat],
             outputs=[qa_chat, qa_question],
         )
         
         # Allow Enter key to submit Q&A question
         qa_question.submit(
             fn=qa_answer_callback,
-            inputs=[qa_question, report_display, sources_table, qa_chat],
+            inputs=[qa_question, report_display, qa_chat],
             outputs=[qa_chat, qa_question],
         )
         
@@ -1233,17 +791,19 @@ def create_interface():
                 **Core Capabilities:**
                 - ✅ Multi-agent architecture (QueryGenerator, SearchAgent, WriterAgent, FollowUpDecisionAgent, FileSummarizerAgent, ReportQAAgent)
                 - ✅ Multi-wave research with intelligent follow-up queries (up to 3 waves)
-                - ✅ User-guided query planning with review and editing
+                - ✅ Dynamic query generation: Planner automatically determines optimal query count based on topic complexity
+                - ✅ User-guided query planning with review and editing (fully editable query table)
                 - ✅ File upload support (PDF, DOCX, TXT) with semantic chunking and parallel processing
                 - ✅ Parallel search execution with concurrent API calls (50x speedup)
                 - ✅ Two-level caching system (L1: in-memory, L2: SQLite persistent) with 24h TTL and LRU management
                 - ✅ Time-sensitive query detection (auto-bypasses cache for "latest", "today", "breaking")
+                - ✅ Intelligent source limits: AI recommends optimal source count based on query complexity
                 
                 **Report Generation:**
                 - ✅ Structured outputs with Pydantic schemas and validation
                 - ✅ Cross-source synthesis with multi-citation support ([1][2][3])
-                - ✅ Comprehensive 2000-5000 word reports with adaptive section structures
-                - ✅ Styled citation boxes with clickable links
+                - ✅ Comprehensive long-form reports with adaptive section structures and nested subsections
+                - ✅ Plain clickable citations (no background highlighting) for clean readability
                 - ✅ Source deduplication and intelligent filtering (top-K by content richness)
                 - ✅ Subtopic extraction and theme analysis for better organization
                 - ✅ Output quality validation with automatic retry on failure
@@ -1251,37 +811,43 @@ def create_interface():
                 **UI & Analytics:**
                 - ✅ Real-time streaming updates with Live Log
                 - ✅ Analytics dashboard with Plotly visualizations (sources, citations, efficiency metrics)
+                - ✅ Workflow graph visualization showing agent architecture and tool interactions
                 - ✅ Interactive Q&A about generated reports (ReportQAAgent)
                 - ✅ Export to Markdown, HTML, and PDF with full citations
                 - ✅ Query-level summaries for better context integration
+                - ✅ Collapsible References section for cleaner report display
                 
                 **Technical Features:**
-                - ✅ Token estimation and prompt optimization (3000 char summary limit)
+                - ✅ Uses GPT-4o-mini for all tasks to optimize cost while maintaining quality
+                - ✅ Token estimation and prompt optimization (5000 char query-level summary limit)
                 - ✅ URL normalization and citation management
                 - ✅ Database migration logic for cache schema evolution
                 - ✅ Source credibility scoring based on domain analysis
                 - ✅ Safe async execution with comprehensive error handling
+                - ✅ Follow-up query deduplication to prevent redundant research waves
                 
                 ### How It Works
                 
-                1. **Planning**: QueryGeneratorAgent creates diverse search queries covering multiple research angles (background, stats, trends, case studies, risks, etc.)
-                2. **Query Review** (optional): Review and edit AI-generated queries before execution
+                1. **Planning**: QueryGeneratorAgent analyzes topic complexity and creates diverse search queries (typically 3-12 queries) covering multiple research angles (background, stats, trends, case studies, risks, etc.)
+                2. **Query Review** (optional): Review and edit AI-generated queries in the interactive table before execution
                 3. **File Processing** (optional): Processes uploaded documents using LLM-based semantic chunking and parallel summarization
-                4. **Search Waves**: Searches the web in parallel for relevant sources with query-level summaries
-                5. **Follow-Up Decision**: FollowUpDecisionAgent analyzes findings and decides if additional research waves are needed
-                6. **Source Processing**: Deduplicates sources, filters to top-K by content richness, and normalizes URLs
-                7. **Writing**: WriterAgent synthesizes sources into structured 2000-5000 word research reports with inline citations
+                4. **Search Waves**: Searches the web in parallel for relevant sources with detailed query-level summaries
+                5. **Follow-Up Decision**: FollowUpDecisionAgent analyzes findings, identifies gaps, and decides if additional research waves are needed (with deduplication against previous queries)
+                6. **Source Processing**: Deduplicates sources, filters to recommended count (or user-specified limit), and normalizes URLs
+                7. **Writing**: WriterAgent synthesizes sources into comprehensive long-form research reports with nested subsections and inline citations
                 8. **Validation**: Validates output quality and retries with simplified prompt if needed
-                9. **Rendering**: Converts to markdown with styled citations and generates References section
+                9. **Rendering**: Converts to markdown with plain clickable citations and generates collapsible References section
                 
                 ### Tips
                 
                 - Use specific topics for better results (e.g., "AI in Healthcare: diagnostics, treatment, and ethics")
-                - The system uses GPT-4o for all agent operations with advanced prompt engineering
+                - The system uses GPT-4o-mini for all tasks to optimize cost while maintaining quality
                 - Upload relevant documents to enhance your research (processed in parallel)
-                - Review and edit queries in the planning phase for better control
-                - Check the Analytics tab after research for detailed metrics and visualizations
+                - Review and edit queries in the planning phase for better control (queries are fully editable)
+                - The planner automatically determines the optimal number of queries based on topic complexity
+                - Check the Analytics tab after research for detailed metrics, visualizations, and workflow graph
                 - Use the Q&A tab to explore your generated report interactively
+                - Reports support nested subsections for hierarchical organization of complex topics
                 
                 ### Caching
                 
@@ -1294,7 +860,7 @@ def create_interface():
                 
                 Make sure your `OPENAI_API_KEY` is set in your environment or `.env` file.
                 """
-            )
+                )
     
     return demo
 

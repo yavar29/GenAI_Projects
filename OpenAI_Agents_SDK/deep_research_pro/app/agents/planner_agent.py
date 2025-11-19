@@ -98,7 +98,7 @@ class QueryGeneratorAgent:
     The number of queries is determined by the agent based on topic complexity
     (typically 3-12 queries, with simple topics needing fewer and complex topics needing more).
     """
-    def __init__(self, model: str = "gpt-4o", openai_client: Optional[AsyncOpenAI] = None):
+    def __init__(self, model: str = "gpt-4o-mini", openai_client: Optional[AsyncOpenAI] = None):
         _ = openai_client
         self.agent = Agent(
         name="QueryGenerator",
@@ -162,7 +162,7 @@ class QueryGeneratorAgent:
 
 class FollowUpDecisionAgent:
     """Decides if additional research waves are needed and generates follow-up queries."""
-    def __init__(self, model: str = "gpt-4o", openai_client: Optional[AsyncOpenAI] = None):
+    def __init__(self, model: str = "gpt-4o-mini", openai_client: Optional[AsyncOpenAI] = None):
         if openai_client:
             # SDK reads from environment
             pass

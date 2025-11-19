@@ -57,7 +57,7 @@ async def main_async():
 
     with trace("Research trace", trace_id=trace_id):
         # Run research pipeline
-        async for report_md, sources_data, status in manager.run(args.topic):
+        async for report_md, status, analytics in manager.run(args.topic):
             # Print status updates
             if status:
                 print(f"[dim]{status}[/dim]")
@@ -76,17 +76,7 @@ async def main_async():
                     output_path.write_text(report_md, encoding="utf-8")
                     print(f"\n[bold green]💾 Saved to {output_path.resolve()}[/bold green]")
                 
-                # Print sources summary
-                if sources_data:
-                    print("\n" + "="*80)
-                    print(f"[bold]Sources ({len(sources_data)}):[/bold]")
-                    print("="*80)
-                    for i, (title, url, source_type, date) in enumerate(sources_data, 1):
-                        print(f"{i}. {title}")
-                        print(f"   {url} ({source_type})")
-                        if date and date != "N/A":
-                            print(f"   Date: {date}")
-                        print()
+                # Sources are now in the References section of the report, no need to print separately
 
 
 def main():

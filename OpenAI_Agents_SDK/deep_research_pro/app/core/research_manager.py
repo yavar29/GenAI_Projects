@@ -63,6 +63,11 @@ MAX_WAVES = 3
 TOPK_PER_QUERY = 5
 MAX_SOURCES_FINAL = 25
 
+# Rate limiting: Limit concurrent API calls to avoid hitting TPM limits
+# With 30K TPM limit, we want to be conservative
+MAX_CONCURRENT_SEARCHES = 3  # Process queries in smaller batches
+MAX_CONCURRENT_SUMMARIES = 5  # Limit parallel summarization
+
 # Helper functions for cross-wave improvement tracking
 def _extract_citations_from_text(text: str) -> set[int]:
     """Extract all citation IDs from text (e.g., [1], [2][3])."""
@@ -260,6 +265,10 @@ class ResearchManager:
 
         # Get search provider
         self.web_search_async = get_search_provider_async("hosted")
+        
+        # Rate limiting semaphores to prevent hitting TPM limits
+        self.search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SEARCHES)
+        self.summarize_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SUMMARIES)
 
     # -----------------------------------------------------------
     # UTILITIES
@@ -297,6 +306,180 @@ class ResearchManager:
         
         # Otherwise return as-is (will be marked as invalid in render)
         return url
+    
+    def _is_valid_url(self, url: str) -> bool:
+        """Check if URL is valid and not a placeholder.
+        
+        Returns False for:
+        - Empty or None URLs
+        - Placeholder patterns like "turn@searchX", "sourceX"
+        - Invalid URL markers like "#"
+        """
+        if not url or url.strip() == "":
+            return False
+        
+        url = url.strip()
+        
+        # Check for placeholder patterns
+        if re.match(r'^turn@search\d+$', url, re.IGNORECASE):
+            return False
+        if re.match(r'^source\d+$', url, re.IGNORECASE):
+            return False
+        if url == "#" or url.startswith("#ref-"):
+            return False
+        if url.startswith("(Invalid URL:") or url.startswith("(No URL provided)"):
+            return False
+        
+        # Must be a valid HTTP/HTTPS URL
+        if url.startswith(('http://', 'https://')):
+            return True
+        
+        return False
+    
+    def _normalize_title_for_dedup(self, title: str) -> str:
+        """Normalize title for deduplication comparison.
+        
+        Removes extra whitespace, converts to lowercase, removes common suffixes.
+        """
+        if not title:
+            return ""
+        
+        # Normalize whitespace and convert to lowercase
+        normalized = re.sub(r'\s+', ' ', title.strip().lower())
+        
+        # Remove common trailing patterns that don't affect uniqueness
+        normalized = re.sub(r'\s*[-–—]\s*(google|deepmind|developers?|blog|article|news)$', '', normalized)
+        normalized = re.sub(r'\s*\|.*$', '', normalized)  # Remove everything after |
+        normalized = re.sub(r'\s*\(.*\)$', '', normalized)  # Remove trailing parentheses
+        
+        return normalized.strip()
+    
+    def _titles_are_similar(self, title1: str, title2: str, threshold: float = 0.85) -> bool:
+        """Check if two titles are similar enough to be considered duplicates.
+        
+        Uses normalized title comparison and simple similarity heuristics.
+        """
+        norm1 = self._normalize_title_for_dedup(title1)
+        norm2 = self._normalize_title_for_dedup(title2)
+        
+        if not norm1 or not norm2:
+            return False
+        
+        # Exact match after normalization
+        if norm1 == norm2:
+            return True
+        
+        # Check if one is a substring of the other (for truncated titles)
+        if len(norm1) > 20 and len(norm2) > 20:
+            if norm1 in norm2 or norm2 in norm1:
+                return True
+        
+        # Simple word overlap check (if >85% of words match)
+        words1 = set(norm1.split())
+        words2 = set(norm2.split())
+        
+        if not words1 or not words2:
+            return False
+        
+        # Remove very common words for comparison
+        common_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
+        words1 = words1 - common_words
+        words2 = words2 - common_words
+        
+        if not words1 or not words2:
+            # Fall back to original word sets if all were common words
+            words1 = set(norm1.split())
+            words2 = set(norm2.split())
+        
+        intersection = words1 & words2
+        union = words1 | words2
+        
+        if not union:
+            return False
+        
+        similarity = len(intersection) / len(union)
+        return similarity >= threshold
+    
+    def _prepare_sources_for_ui(self, sources: List[SourceDoc]) -> List[List[str]]:
+        """Prepare sources for UI display with deduplication and URL validation.
+        
+        Args:
+            sources: List of SourceDoc objects
+            
+        Returns:
+            List of [title, url, type, published] lists, with:
+            - Invalid URLs shown as empty string (not displayed)
+            - Duplicate titles removed (keeps first occurrence with valid URL if available)
+            - Sources with empty/invalid titles filtered out
+        """
+        if not sources:
+            return []
+        
+        seen_titles = {}  # normalized_title -> (index, has_valid_url)
+        sources_data = []
+        
+        for src in sources:
+            title = (src.title or "").strip()
+            
+            # Skip sources with empty or very short titles (less than 3 characters)
+            # Also skip if title is just whitespace or common placeholders
+            if not title or len(title) < 3:
+                continue
+            
+            # Skip common placeholder titles
+            placeholder_patterns = [
+                r'^untitled\s*source$',
+                r'^source\s*\d+$',
+                r'^no\s*title$',
+                r'^n/a$',
+                r'^$',
+            ]
+            if any(re.match(pattern, title, re.IGNORECASE) for pattern in placeholder_patterns):
+                continue
+            
+            # Truncate long titles
+            if len(title) > 80:
+                title = title[:80] + "..."
+            
+            url = src.url or ""
+            source_type = src.source_type or "web"
+            published = src.published or "N/A"
+            
+            # Check if URL is valid
+            is_valid_url = self._is_valid_url(url)
+            
+            # Normalize title for deduplication
+            normalized_title = self._normalize_title_for_dedup(title)
+            
+            # Skip if normalized title is still empty (after removing suffixes)
+            if not normalized_title:
+                continue
+            
+            # Check for duplicates
+            is_duplicate = False
+            for seen_norm, (seen_idx, seen_has_url) in seen_titles.items():
+                if self._titles_are_similar(normalized_title, seen_norm):
+                    # If current has valid URL and seen doesn't, replace it
+                    if is_valid_url and not seen_has_url:
+                        # Replace the previous entry
+                        sources_data[seen_idx][1] = url  # Update URL
+                        seen_titles[seen_norm] = (seen_idx, True)
+                    # Otherwise, skip this duplicate
+                    is_duplicate = True
+                    break
+            
+            if is_duplicate:
+                continue
+            
+            # Add to seen titles
+            seen_titles[normalized_title] = (len(sources_data), is_valid_url)
+            
+            # Only include URL if it's valid, otherwise use empty string
+            display_url = url if is_valid_url else ""
+            
+            sources_data.append([title, display_url, source_type, published])
+        
+        return sources_data
 
     def _merge_sources(self, new_sources: List[SourceDoc], max_total: Optional[int] = None):
         """Merge sources into global index.
@@ -318,18 +501,70 @@ class ResearchManager:
         return merged_count
     
     def _deduplicate_sources(self, sources: List[SourceDoc]) -> List[SourceDoc]:
-        """Remove duplicate sources based on content similarity."""
-        seen_content = set()
+        """Remove duplicate sources based on title similarity, URL, and content similarity.
+        
+        This ensures that the same source doesn't appear multiple times in the sources list
+        presented to the writer agent, preventing duplicate references in the report.
+        """
+        seen_sources = {}  # (normalized_title, normalized_url) -> SourceDoc
         filtered = []
+        
         for src in sources:
+            title = (src.title or "").strip()
+            url = (src.url or "").strip()
             content = (src.content or src.snippet or "").strip()
-            if not content:
+            
+            # Skip sources with empty or very short titles
+            if not title or len(title) < 3:
                 continue
-            # Use a hash of first 500 chars to detect near-duplicates
-            content_key = content[:500].lower()
-            if content_key not in seen_content:
-                seen_content.add(content_key)
-                filtered.append(src)
+            
+            # Skip placeholder titles
+            placeholder_patterns = [
+                r'^untitled\s*source$',
+                r'^source\s*\d+$',
+                r'^no\s*title$',
+                r'^n/a$',
+            ]
+            if any(re.match(pattern, title, re.IGNORECASE) for pattern in placeholder_patterns):
+                continue
+            
+            # Normalize title and URL for comparison
+            normalized_title = self._normalize_title_for_dedup(title)
+            if not normalized_title:
+                continue
+            
+            # Normalize URL (use empty string if invalid)
+            normalized_url = url if self._is_valid_url(url) else ""
+            
+            # Check for duplicates by title similarity and URL
+            is_duplicate = False
+            for (seen_title, seen_url), seen_src in seen_sources.items():
+                # Check title similarity
+                if self._titles_are_similar(normalized_title, seen_title):
+                    # If URLs match (both valid and same, or both invalid), it's a duplicate
+                    if (normalized_url and seen_url and normalized_url == seen_url) or \
+                       (not normalized_url and not seen_url):
+                        is_duplicate = True
+                        break
+                    # If current has valid URL and seen doesn't, prefer current
+                    if normalized_url and not seen_url:
+                        # Replace the seen one
+                        seen_sources[(normalized_title, normalized_url)] = src
+                        # Remove old entry from filtered list and add new one
+                        filtered = [s for s in filtered if s != seen_src]
+                        break
+                    # If seen has valid URL and current doesn't, skip current
+                    if seen_url and not normalized_url:
+                        is_duplicate = True
+                        break
+            
+            if is_duplicate:
+                continue
+            
+            # Add to seen sources and filtered list
+            seen_sources[(normalized_title, normalized_url)] = src
+            filtered.append(src)
+        
         return filtered
     
     def _filter_top_sources(self, sources: List[SourceDoc], top_k: int = 15) -> List[SourceDoc]:
@@ -570,11 +805,23 @@ class ResearchManager:
     async def _summarize_sources(
         self, source_items: List[Tuple[SourceItem, Dict]]
     ) -> List[SourceDoc]:
-        """Helper: Summarize a list of source items in parallel and return SourceDoc objects."""
+        """Helper: Summarize a list of source items in parallel and return SourceDoc objects.
+        
+        Uses semaphore to limit concurrent summarization calls to avoid rate limits.
+        """
         if not source_items:
             return []
         
-        tasks = [self.search_agent.summarize_result_async(item[0]) for item in source_items]
+        async def summarize_with_semaphore(item: Tuple[SourceItem, Dict]) -> Optional[str]:
+            """Summarize a single source item with semaphore protection."""
+            async with self.summarize_semaphore:
+                try:
+                    return await self.search_agent.summarize_result_async(item[0])
+                except Exception as e:
+                    print(f"Warning: Failed to summarize result {item[0].title}: {e}")
+                    return None
+        
+        tasks = [summarize_with_semaphore(item) for item in source_items]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         summarized = []
@@ -631,60 +878,29 @@ class ResearchManager:
 
         async def process_single_query(q: str) -> Tuple[List[SourceDoc], Optional[str]]:
             """Process a single query and return (sources, query_summary)."""
-            nq = self._norm_query(q)
-            status_messages.append(f"🔍 Searching: {q}")
+            # Use semaphore to limit concurrent searches
+            async with self.search_semaphore:
+                nq = self._norm_query(q)
+                status_messages.append(f"🔍 Searching: {q}")
 
-            self.metrics_queries_executed += 1
-            query_summary = None
+                self.metrics_queries_executed += 1
+                query_summary = None
 
-            # Check cache (L1 + L2)
-            cached = self.cache_manager.get(nq)
-            if cached:
-                self.metrics_cache_hits += 1
-                status_messages.append(f"↪ Cache hit for query: {q}")
-                cached_results, cached_summary = cached
-                # Store query-level summary if available
-                if cached_summary:
-                    query_summary = f"Query: {q}\nSummary: {cached_summary}"
-                # Convert cached dicts to SourceItem tuples for summarization
-                # For cached results, we need to re-summarize to get full detailed summaries
-                results_to_process = cached_results[:effective_topk]
-                
-                source_items = []
-                for r in results_to_process:
-                    source_item = SourceItem(
-                        id=0,
-                        title=r.get("title", ""),
-                        url=r.get("url", ""),
-                        snippet=r.get("snippet", ""),
-                        date=r.get("published"),
-                    )
-                    source_items.append((source_item, r))
-                
-                try:
-                    query_sources = await self._summarize_sources(source_items)
-                    self.metrics_total_sources_seen += len(query_sources)
-                    return query_sources, query_summary
-                except Exception as e:
-                    status_messages.append(f"⚠️ Error during parallel summarization for cached results: {e}")
-                    return [], query_summary
-            else:
-                self.metrics_cache_misses += 1
-                # Perform web search
-                try:
-                    summary, web_results = await self.web_search_async(q)
-                    # Store query-level summary
-                    if summary:
-                        query_summary = f"Query: {q}\nSummary: {summary}"
-                    # Store in cache (L1 + L2)
-                    self.cache_manager.set(nq, web_results, summary)
+                # Check cache (L1 + L2)
+                cached = self.cache_manager.get(nq)
+                if cached:
+                    self.metrics_cache_hits += 1
+                    status_messages.append(f"↪ Cache hit for query: {q}")
+                    cached_results, cached_summary = cached
+                    # Store query-level summary if available
+                    if cached_summary:
+                        query_summary = f"Query: {q}\nSummary: {cached_summary}"
+                    # Convert cached dicts to SourceItem tuples for summarization
+                    # For cached results, we need to re-summarize to get full detailed summaries
+                    results_to_process = cached_results[:effective_topk]
                     
-                    # Limit to effective_topk
-                    web_results = web_results[:effective_topk]
-                    
-                    # Prepare source items for summarization
                     source_items = []
-                    for r in web_results:
+                    for r in results_to_process:
                         source_item = SourceItem(
                             id=0,
                             title=r.get("title", ""),
@@ -699,13 +915,46 @@ class ResearchManager:
                         self.metrics_total_sources_seen += len(query_sources)
                         return query_sources, query_summary
                     except Exception as e:
-                        status_messages.append(f"⚠️ Error during parallel summarization: {e}")
+                        status_messages.append(f"⚠️ Error during parallel summarization for cached results: {e}")
                         return [], query_summary
-                except Exception as e:
-                    status_messages.append(f"❌ Error searching {q}: {e}")
-                    return [], None
+                else:
+                    self.metrics_cache_misses += 1
+                    # Perform web search
+                    try:
+                        summary, web_results = await self.web_search_async(q)
+                        # Store query-level summary
+                        if summary:
+                            query_summary = f"Query: {q}\nSummary: {summary}"
+                        # Store in cache (L1 + L2)
+                        self.cache_manager.set(nq, web_results, summary)
+                        
+                        # Limit to effective_topk
+                        web_results = web_results[:effective_topk]
+                        
+                        # Prepare source items for summarization
+                        source_items = []
+                        for r in web_results:
+                            source_item = SourceItem(
+                                id=0,
+                                title=r.get("title", ""),
+                                url=r.get("url", ""),
+                                snippet=r.get("snippet", ""),
+                                date=r.get("published"),
+                            )
+                            source_items.append((source_item, r))
+                        
+                        try:
+                            query_sources = await self._summarize_sources(source_items)
+                            self.metrics_total_sources_seen += len(query_sources)
+                            return query_sources, query_summary
+                        except Exception as e:
+                            status_messages.append(f"⚠️ Error during parallel summarization: {e}")
+                            return [], query_summary
+                    except Exception as e:
+                        status_messages.append(f"❌ Error searching {q}: {e}")
+                        return [], None
 
-        # Process all queries in parallel
+        # Process queries with controlled concurrency (semaphore handles batching)
         query_tasks = [process_single_query(q) for q in queries]
         query_results = await asyncio.gather(*query_tasks, return_exceptions=True)
         
@@ -739,8 +988,8 @@ class ResearchManager:
         queries: Optional[List[str]] = None,
         uploaded_files: Optional[List[str]] = None,
         approved_queries: Optional[List[str]] = None,  # For backward compatibility
-    ) -> AsyncGenerator[Tuple[str, List, str, Optional[object]], None]:
-        """Execute multi-wave research pipeline. Yields (report_md, sources_data, status_text, analytics)."""
+    ) -> AsyncGenerator[Tuple[str, str, Optional[object]], None]:
+        """Execute multi-wave research pipeline. Yields (report_md, status_text, analytics)."""
         if approved_queries:
             queries = approved_queries
 
@@ -776,7 +1025,7 @@ class ResearchManager:
         recommended_source_count = None
         if not queries:
             status_messages.append("🔍 Generating search queries...")
-            yield ("", [], "\n\n".join(status_messages), None)
+            yield ("", "\n\n".join(status_messages), None)
             query_response = await self.planner.generate_async(topic)
             queries = query_response.queries
             status_messages.append(f"✅ Generated {len(queries)} search queries")
@@ -800,26 +1049,26 @@ class ResearchManager:
         trace_url = f"{TRACE_DASHBOARD}{trace_id}"
         status_messages.append(f"🔗 Trace: {trace_url}")
 
-        yield ("", [], "\n\n".join(status_messages), None)
+        yield ("", "\n\n".join(status_messages), None)
 
         with trace("Research trace", trace_id=trace_id):
             # ----------- FILE SUMMARIES (WAVE 0) ----------
             if uploaded_files:
                 status_messages.append(f"📂 Found {len(uploaded_files)} user-uploaded file(s).")
-                yield ("", [], "\n\n".join(status_messages), None)
+                yield ("", "\n\n".join(status_messages), None)
 
                 files_summaries = await self.process_uploaded_files(
                     uploaded_files, status_messages
                 )
                 merged_files = self._merge_sources(files_summaries, max_total=self.max_sources)
                 status_messages.append(f"📁 File processing completed. Merged {merged_files} file source(s).\n")
-                yield ("", [], "\n\n".join(status_messages), None)
+                yield ("", "\n\n".join(status_messages), None)
 
             # ----------- MULTI-WAVE SEARCH ----------
             while wave <= waves_total:
                 wave_start_time = time.monotonic()
                 status_messages.append(f"🌊 Starting Wave {wave}/{waves_total}")
-                yield ("", [], "\n\n".join(status_messages), None)
+                yield ("", "\n\n".join(status_messages), None)
 
                 # Track queries for this wave
                 wave_queries_count = len(queries)
@@ -847,7 +1096,7 @@ class ResearchManager:
                     status_messages.append(f"📝 Executing {wave_queries_count} search queries for this wave...")
                 else:
                     status_messages.append(f"📝 Executing {wave_queries_count} follow-up queries for this wave...")
-                yield ("", [], "\n\n".join(status_messages), None)
+                yield ("", "\n\n".join(status_messages), None)
                 
                 # Step 1 — Web search (pass max_results_per_query as parameter)
                 wave_sources, wave_query_summaries = await self.run_web_search(
@@ -871,15 +1120,15 @@ class ResearchManager:
                 if current_total >= self.max_sources:
                     status_messages.append(f"✅ Wave {wave} complete: Merged {merged_count} new sources in {wave_duration:.1f}s")
                     status_messages.append(f"🧮 Total unique sources: {current_total} (reached limit of {self.max_sources})")
-                    yield ("", [], "\n\n".join(status_messages), None)
+                    yield ("", "\n\n".join(status_messages), None)
                     # Stop searching if we've reached the limit
                     status_messages.append(f"✔ Source limit reached. Ending search waves.\n")
-                    yield ("", [], "\n\n".join(status_messages), None)
+                    yield ("", "\n\n".join(status_messages), None)
                     break
                 else:
                     status_messages.append(f"✅ Wave {wave} complete: Merged {merged_count} new sources in {wave_duration:.1f}s")
                     status_messages.append(f"🧮 Total unique sources so far: {current_total} (limit: {self.max_sources})")
-                    yield ("", [], "\n\n".join(status_messages), None)
+                    yield ("", "\n\n".join(status_messages), None)
                 
                 # Generate intermediate report for cross-wave comparison
                 # Only if we have enough sources (at least 3) to make it meaningful
@@ -947,7 +1196,7 @@ class ResearchManager:
                 status_messages.append(
                     "🤔 Evaluating whether another research wave is needed based on current coverage and gaps..."
                 )
-                yield ("", [], "\n\n".join(status_messages), None)
+                yield ("", "\n\n".join(status_messages), None)
 
                 # Build findings text for follow-up decision
                 findings_sections: List[str] = []
@@ -1017,12 +1266,12 @@ class ResearchManager:
                     status_messages.append(
                         "✔ No genuinely new follow-up queries remained after deduplication. Ending search waves.\n"
                     )
-                    yield ("", [], "\n\n".join(status_messages), None)
+                    yield ("", "\n\n".join(status_messages), None)
                     break
 
                 if not followup.should_follow_up or wave == waves_total:
                     status_messages.append(f"✔ No more follow-ups required. Ending search waves.\n")
-                    yield ("", [], "\n\n".join(status_messages), None)
+                    yield ("", "\n\n".join(status_messages), None)
                     break
 
                 queries = new_followup_queries
@@ -1030,11 +1279,11 @@ class ResearchManager:
                 status_messages.append(
                     f"🔄 Follow-up queries generated: using {len(queries)} new query(ies) (after dropping duplicates)."
                 )
-                yield ("", [], "\n\n".join(status_messages), None)
+                yield ("", "\n\n".join(status_messages), None)
 
             # ----------- FINAL WRITING ----------
             status_messages.append("✍️ Writing final long-form report...")
-            yield ("", [], "\n\n".join(status_messages), None)
+            yield ("", "\n\n".join(status_messages), None)
 
             all_sources_list = list(self.source_index.values())[:self.max_sources]
             
@@ -1216,16 +1465,8 @@ class ResearchManager:
                 efficiency=efficiency,
             )
 
-            # Build sources_data for final yield
-            sources_data = []
-            for i, src in enumerate(filtered_sources, 1):
-                title = src.title or ""
-                if len(title) > 80:
-                    title = title[:80] + "..."
-                source_type = src.source_type or "web"
-                sources_data.append([title, src.url, source_type, src.published or "N/A"])
-
-            yield (md, sources_data, "\n\n".join(status_messages), analytics)
+            # Yield final report without sources_data (references are in the report markdown)
+            yield (md, "\n\n".join(status_messages), analytics)
 
     # -----------------------------------------------------------
     # PLANNING WRAPPER

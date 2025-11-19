@@ -202,15 +202,29 @@ class CacheManager:
         cursor = conn.cursor()
         
         try:
-            # Use INSERT OR REPLACE to update existing entries
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO qcache (k, v, ts, last_access, access_count)
-                VALUES (?, ?, ?, ?, 
-                    COALESCE((SELECT access_count FROM qcache WHERE k = ?), 0) + 1)
-                """,
-                (key, data_json, int(now), int(now), key)
-            )
+            # Check if entry exists
+            cursor.execute("SELECT access_count FROM qcache WHERE k = ?", (key,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Update existing entry, preserve access_count
+                cursor.execute(
+                    """
+                    UPDATE qcache 
+                    SET v = ?, ts = ?, last_access = ?
+                    WHERE k = ?
+                    """,
+                    (data_json, int(now), int(now), key)
+                )
+            else:
+                # Insert new entry
+                cursor.execute(
+                    """
+                    INSERT INTO qcache (k, v, ts, last_access, access_count)
+                    VALUES (?, ?, ?, ?, 1)
+                    """,
+                    (key, data_json, int(now), int(now))
+                )
             conn.commit()
             
             # Prune if needed (check size)

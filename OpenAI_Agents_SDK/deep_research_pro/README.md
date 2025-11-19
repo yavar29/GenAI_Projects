@@ -82,12 +82,15 @@ A multi-agent research co-pilot that plans research strategies, searches the web
 git clone <your-repo-url>
 cd deep_research_pro
 
-# Install dependencies
+# Install Python dependencies
 uv sync
 
 # Set up your OpenAI API key
 # Create a .env file in the project root:
 # OPENAI_API_KEY=sk-your-key-here
+
+# Optional: Install system libraries for PDF export (see Requirements section)
+# On macOS: brew install pango cairo gdk-pixbuf libffi
 ```
 
 ### Web UI (Recommended)
@@ -127,6 +130,32 @@ uv run drp --topic "AI in Healthcare" --output research_report.md
 - OpenAI API key (required for web search functionality)
 - `uv` package manager (recommended) or `pip`
 
+### PDF Export Requirements (Optional)
+
+PDF export requires system libraries that must be installed separately:
+
+**On macOS:**
+```bash
+brew install pango cairo gdk-pixbuf libffi
+```
+
+**On Ubuntu/Debian:**
+```bash
+sudo apt-get install libpango-1.0-0 libcairo2 libgdk-pixbuf2.0-0 libffi-dev
+```
+
+**On Fedora/RHEL:**
+```bash
+sudo dnf install pango cairo gdk-pixbuf2 libffi-devel
+```
+
+After installing system libraries, reinstall weasyprint:
+```bash
+uv pip install --upgrade --force-reinstall weasyprint
+```
+
+**Note:** PDF export is optional. Markdown and HTML export work without these dependencies.
+
 ## 🎯 Usage Examples
 
 ### Basic Research
@@ -165,6 +194,22 @@ uv run drp --topic "Quantum Computing" --output quantum_research.md
 ```
 
 ## 📊 Architecture
+
+### Agent Workflow Diagram
+
+The following diagram visualizes the multi-agent research pipeline, showing how agents, tools, and handoffs work together:
+
+![Agent Workflow](docs/workflow_graph.png)
+
+**Understanding the Visualization:**
+- **Agents** (yellow boxes): ResearchOrchestrator coordinates the entire pipeline
+- **Tools** (green ellipses): Specialized functions used by each agent:
+  - `generate_queries`: QueryGeneratorAgent analyzes topics and creates search queries
+  - `search_web`: SearchAgent searches and summarizes web results
+  - `decide_followup`: FollowUpDecisionAgent determines if more research is needed
+  - `write_report`: WriterAgent synthesizes sources into structured reports
+  - `process_files`: FileSummarizerAgent processes uploaded documents
+- **Handoffs** (arrows): Flow of information and delegation between agents
 
 ### Complete Research Pipeline
 

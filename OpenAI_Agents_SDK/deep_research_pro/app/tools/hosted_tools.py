@@ -45,7 +45,7 @@ def _get_hosted_agent() -> Agent:
                 "If a field is missing (e.g., published), leave it null."
             ),
             tools=[WebSearchTool(search_context_size="low")],
-            model="gpt-4o",
+            model="gpt-4o-mini",
             # Ensure the tool is actually invoked
             model_settings=ModelSettings(tool_choice="required"),
             output_type=SearchOutput,

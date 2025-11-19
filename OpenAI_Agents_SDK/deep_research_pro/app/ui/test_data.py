@@ -349,12 +349,6 @@ async def generate_fake_research_stream(
     # Generate fake analytics
     analytics = generate_fake_analytics(topic, report, num_waves=num_waves)
     
-    # Convert sources to table format
-    sources_data = [
-        [source.title, source.url, source.source_type]
-        for source in sources
-    ]
-    
     # Render report to markdown
     report_md = render_markdown(report)
     
@@ -364,67 +358,67 @@ async def generate_fake_research_stream(
     log_lines.append("=" * 60 + "\n")
     
     # Yield initial state
-    yield (report_md, sources_data, "".join(log_lines), None)
+    yield (report_md, "".join(log_lines), None)
     await asyncio.sleep(0.5)
     
     # Wave 1
     log_lines.append(f"\n📊 Wave 1: Initial Research\n")
     log_lines.append("🔍 Generating search queries...\n")
-    yield (report_md, sources_data, "".join(log_lines), None)
+    yield (report_md, "".join(log_lines), None)
     await asyncio.sleep(0.3)
     
     log_lines.append("✅ Generated 3 search queries\n")
     log_lines.append("🔎 Executing searches...\n")
-    yield (report_md, sources_data, "".join(log_lines), None)
+    yield (report_md, "".join(log_lines), None)
     await asyncio.sleep(0.4)
     
     log_lines.append("✅ Found 5 relevant sources\n")
     log_lines.append("📝 Analyzing sources and generating initial report...\n")
-    yield (report_md, sources_data, "".join(log_lines), None)
+    yield (report_md, "".join(log_lines), None)
     await asyncio.sleep(0.5)
     
     log_lines.append("✅ Wave 1 complete: 2 sections written, 3 citations added\n")
-    yield (report_md, sources_data, "".join(log_lines), None)
+    yield (report_md, "".join(log_lines), None)
     
     if num_waves > 1:
         await asyncio.sleep(0.3)
         log_lines.append(f"\n📊 Wave 2: Deepening Research\n")
         log_lines.append("🔍 Identifying gaps in coverage...\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
         await asyncio.sleep(0.3)
         
         log_lines.append("✅ Generated 2 additional queries\n")
         log_lines.append("🔎 Executing targeted searches...\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
         await asyncio.sleep(0.4)
         
         log_lines.append("✅ Found 3 new sources\n")
         log_lines.append("📝 Expanding report with new findings...\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
         await asyncio.sleep(0.5)
         
         log_lines.append("✅ Wave 2 complete: 250 words added, 4 citations added\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
     
     if num_waves > 2:
         await asyncio.sleep(0.3)
         log_lines.append(f"\n📊 Wave 3: Refinement\n")
         log_lines.append("🔍 Verifying information and checking for gaps...\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
         await asyncio.sleep(0.3)
         
         log_lines.append("✅ Generated 1 verification query\n")
         log_lines.append("🔎 Executing verification search...\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
         await asyncio.sleep(0.4)
         
         log_lines.append("✅ Found 2 additional sources\n")
         log_lines.append("📝 Refining report and adding final details...\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
         await asyncio.sleep(0.5)
         
         log_lines.append("✅ Wave 3 complete: 150 words rewritten, 2 citations added\n")
-        yield (report_md, sources_data, "".join(log_lines), None)
+        yield (report_md, "".join(log_lines), None)
     
     await asyncio.sleep(0.3)
     log_lines.append(f"\n✨ Research Complete!\n")
@@ -433,5 +427,5 @@ async def generate_fake_research_stream(
     log_lines.append("✅ All waves completed successfully\n")
     
     # Final yield with analytics
-    yield (report_md, sources_data, "".join(log_lines), analytics)
+    yield (report_md, "".join(log_lines), analytics)
 

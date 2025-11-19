@@ -9,7 +9,7 @@ from app.core.safe import safe_run_async
 
 class SearchAgent:
     """Summarizes individual search results into detailed analytical summaries."""
-    def __init__(self, model: str = "gpt-4o", openai_client: Optional[AsyncOpenAI] = None):
+    def __init__(self, model: str = "gpt-4o-mini", openai_client: Optional[AsyncOpenAI] = None):
         if openai_client:
             # SDK reads from environment
             pass

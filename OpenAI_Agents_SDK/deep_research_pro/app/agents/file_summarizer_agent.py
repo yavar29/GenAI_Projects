@@ -8,8 +8,8 @@ from openai import AsyncOpenAI
 from app.core.semantic_chunker import SemanticChunker
 from app.schemas.source import SourceDoc
 
-CHUNK_SUMMARY_MODEL = "gpt-4o"
-FINAL_MERGE_MODEL = "gpt-4o"
+CHUNK_SUMMARY_MODEL = "gpt-4o-mini"  # Simple summarization task
+FINAL_MERGE_MODEL = "gpt-4o-mini"  # Merging summaries is straightforward
 
 class FileSummarizerAgent:
     def __init__(self, client: AsyncOpenAI):

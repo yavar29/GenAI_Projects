@@ -19,7 +19,7 @@ class ReportQAAgent:
 
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: str = "gpt-4o-mini",
         openai_client: Optional[AsyncOpenAI] = None,
     ) -> None:
         # The Agents SDK reads auth from env; we keep openai_client for symmetry.
@@ -53,7 +53,7 @@ class ReportQAAgent:
             model=model,
             model_settings=ModelSettings(
                 temperature=0.25,
-                max_output_tokens=800,
+                max_output_tokens=1000,
             ),
         )
 

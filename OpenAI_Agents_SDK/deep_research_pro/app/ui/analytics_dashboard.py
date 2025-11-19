@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 from collections import Counter
+from pathlib import Path
 
 import gradio as gr
 import plotly.express as px
@@ -70,6 +71,14 @@ def create_analytics_tab(
                 waves_timeline = gr.Plot(label="Research Waves Timeline")
                 efficiency_md = gr.Markdown(label="Efficiency Metrics")
                 cache_stats_md = gr.Markdown(label="Cache Statistics", visible=False)
+            
+            # 4. Workflow Graph
+            with gr.Tab("🔄 Workflow Graph"):
+                workflow_graph_image = gr.Image(
+                    label="Agent Workflow Diagram",
+                    type="filepath",
+                    elem_classes=["workflow-graph"]
+                )
 
         # ------------- UPDATE FUNCTION (PURELY FROM STATE) -------------
         def update_dashboard(analytics: Optional[AnalyticsPayload]):
@@ -89,6 +98,12 @@ def create_analytics_tab(
                     f"<li style='color: #000000 !important;'>TTL: <strong style='color: #000000 !important;'>{cache_stats['ttl_hours']} hours</strong></li>"
                     f"</ul></div>"
                 )
+                # Workflow graph (always available if file exists)
+                workflow_graph_path = Path("docs/workflow_graph.png")
+                workflow_graph_value = None
+                if workflow_graph_path.exists():
+                    workflow_graph_value = str(workflow_graph_path.resolve())
+                
                 return (
                     "<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #334155; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);'>No analytics available yet. Run a research session and populate analytics_state.</div>",
                     None,
@@ -101,6 +116,7 @@ def create_analytics_tab(
                     "<div style='background: linear-gradient(135deg, #e0e7ff 0%, #e9d5ff 100%); color: #334155; padding: 1rem; border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);'>No efficiency data.</div>",
                     None,
                     cache_info,
+                    workflow_graph_value,
                 )
 
             # --- Overview ---
@@ -291,6 +307,12 @@ def create_analytics_tab(
                 f"</ul></div>"
             )
 
+            # Workflow graph
+            workflow_graph_path = Path("docs/workflow_graph.png")
+            workflow_graph_value = None
+            if workflow_graph_path.exists():
+                workflow_graph_value = str(workflow_graph_path.resolve())
+
             return (
                 overview_text,
                 src_type_fig,
@@ -303,6 +325,7 @@ def create_analytics_tab(
                 eff_md,
                 waves_fig,
                 cache_info,
+                workflow_graph_value,
             )
 
         # Wire the dashboard to the analytics_state
@@ -321,6 +344,7 @@ def create_analytics_tab(
                 efficiency_md,
                 waves_timeline,
                 cache_stats_md,
+                workflow_graph_image,
             ],
         )
         

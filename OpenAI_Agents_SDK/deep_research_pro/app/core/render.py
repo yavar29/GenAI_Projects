@@ -219,6 +219,37 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
                                 return num_str  # Part of larger number
                             if end < len(summary_text) and summary_text[end].isdigit():
                                 return num_str  # Part of larger number
+                            
+                            # CRITICAL: Don't wrap numbers that are part of product names, versions, or measurements
+                            # Check preceding characters (look back up to 20 chars for context)
+                            lookback_start = max(0, start - 20)
+                            preceding_text = summary_text[lookback_start:start].lower()
+                            
+                            # Don't wrap if preceded by product name patterns:
+                            # - Letters followed by hyphen: "WeatherNext-", "Model-"
+                            # - Letters followed by space: "WeatherNext ", "Model "
+                            # - Common version/product words: "version", "v", "model", "release"
+                            if re.search(r'[a-z]+[-_]\s*$|[a-z]+\s+$|version\s+|v\d+\s*$|model\s+|release\s+', preceding_text):
+                                return num_str  # Part of product name or version
+                            
+                            # Check if followed by measurement units (don't wrap)
+                            following_text = summary_text[end:min(len(summary_text), end + 10)].lower()
+                            measurement_units = ['days', 'hours', 'minutes', 'seconds', 'years', 'months', 
+                                                'degrees', 'percent', '%', 'km', 'miles', 'meters', 'feet',
+                                                'kg', 'pounds', 'tons', 'liters', 'gallons']
+                            if any(following_text.strip().startswith(unit + ' ') or 
+                                   following_text.strip().startswith(unit + ',') or
+                                   following_text.strip().startswith(unit + '.') or
+                                   following_text.strip().startswith(unit + ';')
+                                   for unit in measurement_units):
+                                return num_str  # Part of measurement, not citation
+                            
+                            # Check immediate preceding character
+                            if start > 0:
+                                prev_char = summary_text[start-1]
+                                # Don't wrap if preceded by letter, hyphen, or underscore (product names)
+                                if prev_char.isalpha() or prev_char in ['-', '_']:
+                                    return num_str  # Part of name/version
                         return f"[{num_str}]"
                 except (ValueError, TypeError):
                     pass
@@ -227,7 +258,10 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
             # Pattern to match standalone numbers (1-3 digits) that could be citations
             # Match numbers that are: at word boundaries, followed by space, punctuation, or end of string
             # But not followed by another digit (to avoid matching parts of larger numbers)
-            summary_text = re.sub(r'\b(\d{1,3})\b(?=\s|[,.;:!?]|$)', wrap_bare_citation, summary_text)
+            # IMPORTANT: Only match numbers that are clearly citations, not part of product names, versions, or measurements
+            # Don't match if preceded by: letters, hyphens, underscores (product names like "WeatherNext-2", "Model 3")
+            # Don't match if followed by: units like "days", "hours", "degrees", etc.
+            summary_text = re.sub(r'(?<![a-zA-Z\-_])\b(\d{1,3})\b(?=\s|[,.;:!?]|$)', wrap_bare_citation, summary_text)
             
             # Find all citation patterns like [1], [2], [10] and convert to clickable links
             def replace_citation(match):
@@ -297,18 +331,43 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
                                 start = match.start()
                                 end = match.end()
                                 if start > 0 and end < len(subsection_content):
+                                    # Check if already wrapped
                                     if subsection_content[start-1] == '[' and subsection_content[end] == ']':
                                         return num_str
+                                    # Check if part of larger number
                                     if start > 0 and subsection_content[start-1].isdigit():
                                         return num_str
                                     if end < len(subsection_content) and subsection_content[end].isdigit():
                                         return num_str
+                                    
+                                    # CRITICAL: Don't wrap numbers that are part of product names, versions, or measurements
+                                    lookback_start = max(0, start - 20)
+                                    preceding_text = subsection_content[lookback_start:start].lower()
+                                    
+                                    if re.search(r'[a-z]+[-_]\s*$|[a-z]+\s+$|version\s+|v\d+\s*$|model\s+|release\s+', preceding_text):
+                                        return num_str
+                                    
+                                    following_text = subsection_content[end:min(len(subsection_content), end + 10)].lower()
+                                    measurement_units = ['days', 'hours', 'minutes', 'seconds', 'years', 'months', 
+                                                        'degrees', 'percent', '%', 'km', 'miles', 'meters', 'feet',
+                                                        'kg', 'pounds', 'tons', 'liters', 'gallons']
+                                    if any(following_text.strip().startswith(unit + ' ') or 
+                                           following_text.strip().startswith(unit + ',') or
+                                           following_text.strip().startswith(unit + '.') or
+                                           following_text.strip().startswith(unit + ';')
+                                           for unit in measurement_units):
+                                        return num_str
+                                    
+                                    if start > 0:
+                                        prev_char = subsection_content[start-1]
+                                        if prev_char.isalpha() or prev_char in ['-', '_']:
+                                            return num_str
                                 return f"[{num_str}]"
                         except (ValueError, TypeError):
                             pass
                         return num_str
                     
-                    subsection_content = re.sub(r'\b(\d{1,3})\b(?=\s|[,.;:!?]|$)', wrap_bare_citation_sub, subsection_content)
+                    subsection_content = re.sub(r'(?<![a-zA-Z\-_])\b(\d{1,3})\b(?=\s|[,.;:!?]|$)', wrap_bare_citation_sub, subsection_content)
                     
                     # Replace citations with clickable links (reuse the same function logic)
                     def replace_citation_sub(match):
@@ -604,6 +663,7 @@ def render_pdf_from_markdown(markdown_text: str, output_path: str) -> str:
         
     Raises:
         ImportError: If weasyprint is not installed
+        OSError: If required system libraries are missing
         Exception: If PDF generation fails
     """
     try:
@@ -612,6 +672,19 @@ def render_pdf_from_markdown(markdown_text: str, output_path: str) -> str:
         raise ImportError(
             "weasyprint is required for PDF export. Install it with: pip install weasyprint"
         )
+    except OSError as e:
+        # Handle missing system libraries (libpango, libcairo, etc.)
+        error_msg = str(e)
+        if "libpango" in error_msg or "libcairo" in error_msg or "libgdk" in error_msg:
+            raise OSError(
+                "PDF export requires system libraries that are not installed.\n\n"
+                "On macOS, install them with Homebrew:\n"
+                "  brew install pango cairo gdk-pixbuf libffi\n\n"
+                "Then reinstall weasyprint:\n"
+                "  pip install --upgrade --force-reinstall weasyprint\n\n"
+                f"Original error: {error_msg}"
+            )
+        raise
     
     # Convert markdown to HTML
     html_content = render_html_from_markdown(markdown_text)
@@ -619,8 +692,22 @@ def render_pdf_from_markdown(markdown_text: str, output_path: str) -> str:
     # Wrap with styles
     full_html = render_html_with_styles(html_content)
     
-    # Generate PDF
-    HTML(string=full_html).write_pdf(output_path)
+    try:
+        # Generate PDF
+        HTML(string=full_html).write_pdf(output_path)
+    except OSError as e:
+        # Catch OSError during PDF generation (missing libraries)
+        error_msg = str(e)
+        if "libpango" in error_msg or "libcairo" in error_msg or "libgdk" in error_msg:
+            raise OSError(
+                "PDF export requires system libraries that are not installed.\n\n"
+                "On macOS, install them with Homebrew:\n"
+                "  brew install pango cairo gdk-pixbuf libffi\n\n"
+                "Then reinstall weasyprint:\n"
+                "  pip install --upgrade --force-reinstall weasyprint\n\n"
+                f"Original error: {error_msg}"
+            )
+        raise
     
     return output_path
 

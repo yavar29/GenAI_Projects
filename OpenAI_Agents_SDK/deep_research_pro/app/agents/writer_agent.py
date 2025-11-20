@@ -184,7 +184,7 @@ class WriterAgent:
             tools=[save_markdown],
             model_settings=ModelSettings(
                 temperature=0.3,
-                max_output_tokens=8000,
+                max_output_tokens=16000,
             ),
             output_type=WriterOutput,
         )

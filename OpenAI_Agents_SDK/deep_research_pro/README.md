@@ -4,7 +4,7 @@ A multi-agent research assistant built on the OpenAI Agents SDK. Given a questio
 
 https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0
 
-[Watch the full-resolution demo (1080p, 38 s)](https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0)
+[Watch the full-resolution demo](https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0) (1080p, 38 s)
 
 ## How it works
 

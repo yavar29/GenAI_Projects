@@ -2,9 +2,7 @@
 
 A multi-agent research assistant built on the OpenAI Agents SDK. Given a question, it plans a set of web searches, lets you review them, runs them in parallel, decides whether a follow-up round is needed, and writes a structured report in which every claim is cited to a numbered source.
 
-![Deep Research Pro demo](demo/deep_research_pro_demo.gif)
-
-[Download the full-resolution demo (MP4, 38 s)](demo/deep_research_pro_demo.mp4?raw=true)
+https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0
 
 ## How it works
 

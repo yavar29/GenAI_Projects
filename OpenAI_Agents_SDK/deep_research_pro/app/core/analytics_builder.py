@@ -1,12 +1,17 @@
 # app/core/analytics_builder.py
 
 from __future__ import annotations
+
 from typing import List, Optional, Dict
-import re
+
 from collections import Counter
+
 from urllib.parse import urlparse
+
 from app.schemas.report import ResearchReport
+
 from app.schemas.source import SourceDoc
+
 from app.schemas.analytics import (
     AnalyticsPayload,
     SessionOverview,
@@ -44,34 +49,20 @@ def _extract_domain(url: str) -> Optional[str]:
 
 def _bucket_publication_date(published: Optional[str]) -> str:
     """
-    Extract year from publication date string.
-    Handles various formats:
-    - "2025-06-04"
-    - "May 14, 2025"
-    - "Jun 09, 2025"
-    - "14 May 2025"
-    - "2025"
-    - etc.
-    
-    Returns the year as a string (e.g., '2025') or 'Unknown' if no year found.
+    Very lightweight bucketing:
+    - If we can extract a 4-digit year, use that year (e.g., '2022').
+    - Otherwise, return 'Unknown'.
     """
     if not published:
         return "Unknown"
-    
-    # Use regex to find any 4-digit year (1900-2099)
-    # Look for years that are reasonable (1900-2099)
-    year_pattern = r'\b(19\d{2}|20[0-9]{2})\b'
-    matches = re.findall(year_pattern, str(published))
-    
-    if matches:
-        # Return the first (most likely) year found
-        # If multiple years, prefer the most recent one
-        years = [int(m) for m in matches]
-        return str(max(years))  # Return the most recent year
-    
+    # Look for a 4-digit year in the string
+    for token in published.split("-"):
+        token = token.strip()
+        if len(token) == 4 and token.isdigit():
+            return token
     return "Unknown"
 
-# credibility score can be improved by using more advanced algorithms and data sources based on the domain, source type, and publication date.
+
 def _score_credibility(url: str, source_type: str, published: Optional[str] = None) -> int:
     """
     Enhanced credibility scoring based on domain, source type, and publication date.
@@ -142,7 +133,7 @@ def _score_credibility(url: str, source_type: str, published: Optional[str] = No
         # Check if it's a known reputable org
         if any(od in domain_clean for od in org_domains):
             return 4
-       
+        # Generic .org gets 3, but we'll check below
     
     # ========== SCORE 3: Medium Credibility ==========
     # Commercial domains - check for known reputable commercial sites

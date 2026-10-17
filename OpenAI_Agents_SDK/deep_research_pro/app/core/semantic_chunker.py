@@ -8,7 +8,7 @@ MIN_CHUNK_SIZE = 900
 OVERLAP = 150
 
 class SemanticChunker:
-    def __init__(self, client: AsyncOpenAI, model_name: str = "gpt-4o-mini"):
+    def __init__(self, client: AsyncOpenAI, model_name: str = "gpt-4o"):
         self.client = client
         self.model_name = model_name
 

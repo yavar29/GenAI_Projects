@@ -24,7 +24,6 @@ from app.core.research_manager import ResearchManager
 from app.agents.report_qa_agent import ReportQAAgent
 from app.schemas.analytics import AnalyticsPayload
 from app.ui.analytics_dashboard import create_analytics_tab
-from app.ui.styles import get_css
 
 # Ensure OPENAI_API_KEY is in environment for Agents SDK
 # The SDK reads from os.environ, not just from dotenv
@@ -87,13 +86,14 @@ async def run_research_stream(
     num_sources: int,
     num_waves: int,
     uploaded_files: list,
+    show_outline: bool = False,
 ):
     """
     Async generator → streamed output to Gradio.
-    Yields: (report_md, status_text, analytics)
+    Yields: (report_md, sources_data, status_text, outline_update, analytics)
     """
     if not topic or topic.strip() == "":
-        yield ("", "❌ Please provide a research topic.", None)
+        yield ("", [], "❌ Please provide a research topic.", gr.update(visible=False), None)
         return
 
     # Filter out empty queries
@@ -106,7 +106,7 @@ async def run_research_stream(
         queries = [str(q).strip() for q in queries if q and str(q).strip()]
     
     if not queries:
-        yield ("", "❌ Please provide at least one search query.", None)
+        yield ("", [], "❌ Please provide at least one search query.", gr.update(visible=False), None)
         return
 
     # Save uploaded files to disk
@@ -115,7 +115,7 @@ async def run_research_stream(
         try:
             uploaded_paths = save_uploads(uploaded_files)
         except Exception as e:
-            yield ("", f"❌ Error saving uploaded files: {e}", None)
+            yield ("", [], f"❌ Error saving uploaded files: {e}", gr.update(visible=False), None)
             return
 
     # Initialize ResearchManager
@@ -125,10 +125,11 @@ async def run_research_stream(
             max_sources=num_sources,
             max_waves=num_waves,
             topk_per_query=5,
+            num_searches=len(queries),  # For backward compatibility
             num_sources=num_sources,  # For backward compatibility
         )
     except Exception as ex:
-        yield ("", f"❌ Failed to initialize ResearchManager: {ex}", None)
+        yield ("", [], f"❌ Failed to initialize ResearchManager: {ex}", gr.update(visible=False), None)
         return
 
     # Run research pipeline
@@ -138,7 +139,7 @@ async def run_research_stream(
             queries=queries,
             uploaded_files=uploaded_paths if uploaded_paths else None,
         ):
-            report_md, status_text, analytics = result
+            report_md, sources_data, status_text, analytics = result
             
             # Trim log to prevent excessive growth
             status_text = _truncate_message(status_text, max_chars=8000)
@@ -147,15 +148,36 @@ async def run_research_stream(
             # Add auto-scroll anchor
             status_text += '\n\n<a href="#end"> </a><div id="end"></div>'
             
-            yield (report_md, status_text, analytics)
+            # Extract outline from report if available and show_outline is True
+            outline_update = gr.update(visible=False)
+            if show_outline and report_md:
+                # Robust outline extraction - handles variations in heading format
+                lines = report_md.split("\n")
+                outline_lines, in_outline = [], False
+                for line in lines:
+                    h2 = line.strip().lower().startswith("## ")
+                    if h2 and "outline" in line.strip().lower():
+                        in_outline = True
+                        outline_lines.append(line)
+                        continue
+                    if in_outline:
+                        if h2 and "outline" not in line.strip().lower():
+                            break
+                        if line.strip().startswith(("-", "*")) or line.strip() == "":
+                            outline_lines.append(line)
+                if outline_lines:
+                    outline_text = "\n".join(outline_lines).strip()
+                    outline_update = gr.update(value=outline_text, visible=True)
+            
+            yield (report_md, sources_data, status_text, outline_update, analytics)
     except Exception as e:
-        yield ("", f"❌ Error during research: {str(e)}", None)
+        yield ("", [], f"❌ Error during research: {str(e)}", gr.update(visible=False), None)
 
 # -------------------------------------------------------------
 # Callback: Generate Search Plan
 # -------------------------------------------------------------
 
-async def generate_plan_callback(topic: str, num_sources: int):
+async def generate_plan_callback(topic: str, num_searches: int, num_sources: int):
     """
     Generate search plan (queries) for user review.
     """
@@ -168,7 +190,8 @@ async def generate_plan_callback(topic: str, num_sources: int):
             max_sources=num_sources,
             max_waves=2,
             topk_per_query=5,
-            num_sources=num_sources,  # For backward compatibility
+            num_searches=num_searches,
+            num_sources=num_sources,
         )
         
         plan = await manager.generate_plan(topic)
@@ -192,56 +215,50 @@ async def generate_plan_callback(topic: str, num_sources: int):
 # Callback: Q&A on top of the final report
 # -------------------------------------------------------------
 
-def _extract_sources_from_report(report_md: str) -> str:
+def _sources_table_to_text(sources_table) -> str:
     """
-    Extract sources from the References section of the report markdown.
-    Returns a plain-text list with numeric IDs that the Q&A agent can cite as [1], [2], ...
+    Convert the sources dataframe/list into a plain-text list with numeric IDs
+    that the Q&A agent can cite as [1], [2], ...
     """
-    if not report_md:
+    # Handle None or empty list first
+    if sources_table is None:
         return "No sources were provided."
     
-    import re
+    # Handle possible pandas DataFrame
+    rows = sources_table
+    try:
+        import pandas as pd
+        if isinstance(sources_table, pd.DataFrame):
+            if sources_table.empty:
+                return "No sources were provided."
+            rows = sources_table.values.tolist()
+    except (ImportError, AttributeError):
+        pass
     
-    # Look for the References section (collapsible details)
-    # Pattern: <details>...<summary>References</summary>...references...</details>
-    refs_pattern = r'<details>.*?<summary>.*?References.*?</summary>(.*?)</details>'
-    match = re.search(refs_pattern, report_md, re.DOTALL | re.IGNORECASE)
-    
-    if not match:
-        # Try markdown format: ## References
-        refs_pattern = r'##\s+References\s*\n(.*?)(?=\n##|\Z)'
-        match = re.search(refs_pattern, report_md, re.DOTALL | re.IGNORECASE)
-    
-    if not match:
+    # Check if rows is empty (for list case)
+    if not rows or len(rows) == 0:
         return "No sources were provided."
-    
-    refs_content = match.group(1)
-    
-    # Extract individual references
-    # Pattern: [id] Title or [id] <a href="url">Title</a>
-    ref_pattern = r'\[(\d+)\]\s*(?:<a[^>]*>)?([^<]+)(?:</a>)?'
-    matches = re.findall(ref_pattern, refs_content)
-    
-    if not matches:
-        return "No sources were provided."
-    
+
     lines = []
-    for ref_id, title in matches:
-        title = title.strip()
-        if title:
-            lines.append(f"[{ref_id}] {title}")
-    
+    for i, row in enumerate(rows, 1):
+        # Expect shape: [Title, URL, Type]
+        if not row:
+            continue
+        title = str(row[0]) if len(row) > 0 else ""
+        url = str(row[1]) if len(row) > 1 else ""
+        source_type = str(row[2]) if len(row) > 2 else ""
+        lines.append(f"[{i}] ({source_type}) {title} | {url}")
     return "\n".join(lines) if lines else "No sources were provided."
 
 
 async def qa_answer_callback(
     question: str,
     report_md: str,
+    sources_table,
     chat_history: list,
 ):
     """
-    Answer a user question based on the current report.
-    Sources are extracted from the References section of the report.
+    Answer a user question based on the current report and sources.
     Returns updated chat history and clears the question box.
     """
     # Normalize history
@@ -261,8 +278,8 @@ async def qa_answer_callback(
         )
         return chat_history, ""
 
-    # Extract sources from the References section of the report
-    sources_text = _extract_sources_from_report(report_md)
+    # Prepare sources text
+    sources_text = _sources_table_to_text(sources_table)
 
     # Instantiate Q&A agent
     qa_agent = ReportQAAgent(openai_client=make_async_client())
@@ -292,6 +309,7 @@ async def start_research_callback(
     num_sources: int,
     num_waves: int,
     files: list,
+    show_outline: bool,
 ):
     """
     Start the main research pipeline.
@@ -299,7 +317,7 @@ async def start_research_callback(
     queries = [row[0] for row in (df_queries or []) if row and row[0].strip()]
     
     if not queries:
-        yield ("", [], "❌ No queries found. Please generate or enter queries.", None)
+        yield ("", [], "❌ No queries found. Please generate or enter queries.", gr.update(visible=False))
         return
 
     # Run generator
@@ -309,6 +327,7 @@ async def start_research_callback(
         num_sources,
         num_waves,
         files or [],
+        show_outline,
     ):
         yield result
 
@@ -317,78 +336,90 @@ async def start_research_callback(
 # -------------------------------------------------------------
 
 def create_interface():
-    # Get absolute paths to images and convert to base64
-    project_root = Path(__file__).parent.parent.parent
-    bg_image_path = project_root / "_.jpeg"  # Background image
-    header_image_path = project_root / "Background_photo.png"  # Header image
-    
-    # Convert background image to base64
-    import base64
-    bg_image_url = ""
-    if bg_image_path.exists():
-        with open(bg_image_path, "rb") as img_file:
-            img_data = img_file.read()
-            bg_image_base64 = base64.b64encode(img_data).decode('utf-8')
-            bg_image_url = f"data:image/jpeg;base64,{bg_image_base64}"
-    
-    # Convert header image to base64
-    header_image_url = ""
-    if header_image_path.exists():
-        with open(header_image_path, "rb") as img_file:
-            img_data = img_file.read()
-            header_image_base64 = base64.b64encode(img_data).decode('utf-8')
-            header_image_url = f"data:image/png;base64,{header_image_base64}"
-    
-    # Get CSS from styles module
-    css_content = get_css(bg_image_url)
-    
     with gr.Blocks(
         title="Deep Research Pro",
         theme=gr.themes.Soft(),
-        css=css_content
+        css="""
+        .gradio-container {
+            max-width: 1200px !important;
+        }
+        #live-log {
+            max-height: 600px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            background: #f9fafb !important;
+            color: #111827 !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        #live-log * {
+            color: #111827 !important;
+        }
+        .report-markdown a[href] {
+            display: inline-block;
+            padding: 2px 6px;
+            margin: 0 2px;
+            background-color: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 3px;
+            color: #1976d2;
+            text-decoration: none;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+        .report-markdown a[href]:hover {
+            background-color: #bbdefb;
+            border-color: #1976d2;
+        }
+        /* Plan section - add padding to prevent content from touching borders */
+        .plan-section {
+            padding: 1.5rem !important;
+        }
+        .plan-section .dataframe,
+        .plan-section .gr-df {
+            margin: 1rem 0 !important;
+            padding: 0.5rem !important;
+        }
+        """
     ) as demo:
-        # Hero Header Section with image
-        with gr.Group(elem_classes=["hero-header"]):
-            # Create a row for header image and text
-            with gr.Row():
-                # Header image - much bigger
-                if header_image_url:
-                    with gr.Column(scale=0, min_width=420):
-                        gr.HTML(
-                            f"""
-                            <div class="header-image-container">
-                                <img src="{header_image_url}" alt="Deep Research Pro Logo" />
-                            </div>
-                            """
-                        )
-                
-                # Header text
-                with gr.Column(scale=1):
-                    gr.Markdown(
-                        f"""
-                        # 🔬 {PROJECT_NAME}
-                        ### AI-Powered Research Assistant
-                        
-                        Enter a research topic below and get a comprehensive research report with citations.
-                        Upload PDFs, DOCX, or TXT files to include them in your research.
-                        """
-                    )
-        
-        topic_input = gr.Textbox(
-            label="Research Topic",
-            placeholder="e.g., AI in Healthcare, Climate Change Solutions, Quantum Computing",
-            value="AI in Healthcare",
-            lines=2,
+        gr.Markdown(
+            f"""
+            # 🔬 {PROJECT_NAME}
+            ### AI-Powered Research Assistant
+            
+            Enter a research topic below and get a comprehensive research report with citations.
+            Upload PDFs, DOCX, or TXT files to include them in your research.
+            """
         )
         
+        with gr.Row():
+            topic_input = gr.Textbox(
+                label="Research Topic",
+                placeholder="e.g., AI in Healthcare, Climate Change Solutions, Quantum Computing",
+                value="AI in Healthcare",
+                lines=2,
+            )
+        
         with gr.Accordion("Advanced Options", open=False):
+            num_searches = gr.Slider(
+                minimum=3,
+                maximum=10,
+                value=5,
+                step=1,
+                label="Number of Searches",
+                info="Number of search queries to generate"
+            )
+            
             num_sources = gr.Slider(
                 minimum=5,
-                maximum=100,
+                maximum=50,
                 value=25,
                 step=1,
-                label="Max Source Limit (Optional)",
-                info="Maximum number of sources to include. Leave at default (25) to let AI decide based on query complexity, or set explicitly for cost/time control."
+                label="Max Source Limit",
+                info="Maximum number of sources to include in the report"
             )
             
             max_waves = gr.Slider(
@@ -398,6 +429,12 @@ def create_interface():
                 step=1,
                 label="Max Research Waves",
                 info="Maximum number of research iterations"
+            )
+            
+            show_outline = gr.Checkbox(
+                label="Show Outline Preview",
+                value=False,
+                info="Preview the report outline in the Live Log"
             )
             
             file_upload = gr.Files(
@@ -426,12 +463,11 @@ def create_interface():
             query_inputs = gr.Dataframe(
                 headers=["Search Query"],
                 datatype=["str"],
-                row_count="dynamic",
+                row_count=5,
                 col_count=1,
                 wrap=True,
                 label="✏️ Edit Search Queries",
                 interactive=True,
-                value=[[""] for _ in range(5)],
             )
             
             with gr.Row():
@@ -441,9 +477,11 @@ def create_interface():
         plan_state = gr.State(value={})
         analytics_state = gr.State(value=None)  # Will hold AnalyticsPayload
         
-        # --- Live Log ---
+        # --- Live Log and Outline ---
         with gr.Accordion("📊 Live Log (streaming)", open=True):
             live_log = gr.Markdown(value="Ready.", elem_id="live-log")
+        
+        outline_md = gr.Markdown(visible=False, label="Outline Preview")
         
         with gr.Tabs():
             with gr.Tab("📄 Report"):
@@ -456,11 +494,9 @@ def create_interface():
                 with gr.Row():
                     export_md_btn = gr.Button("💾 Export Markdown")
                     export_html_btn = gr.Button("🌐 Export HTML")
-                    export_pdf_btn = gr.Button("📄 Export PDF")
                 
                 export_md_file = gr.File(label="Download Markdown", visible=False)
                 export_html_file = gr.File(label="Download HTML", visible=False)
-                export_pdf_file = gr.File(label="Download PDF", visible=False)
                 
                 def export_markdown(md_text: str):
                     if not md_text or md_text.startswith("# Your research report"):
@@ -486,39 +522,6 @@ def create_interface():
                     except Exception:
                         return gr.File(visible=False)
                 
-                def export_pdf(md_text: str):
-                    if not md_text or md_text.startswith("# Your research report"):
-                        return gr.File(visible=False)
-                    try:
-                        from app.core.render import render_pdf_from_markdown
-                        path = Path("data/exported_report.pdf")
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        render_pdf_from_markdown(md_text, str(path.resolve()))
-                        return gr.File(value=str(path.resolve()), visible=True)
-                    except ImportError as e:
-                        # Return error message if weasyprint is not installed
-                        error_msg = "❌ PDF export requires weasyprint. Install with: pip install weasyprint"
-                        print(error_msg)
-                        print(f"Details: {e}")
-                        return gr.File(visible=False)
-                    except OSError as e:
-                        # Handle missing system libraries (libpango, libcairo, etc.)
-                        error_msg = str(e)
-                        print("❌ PDF Export Error - Missing System Libraries")
-                        print(error_msg)
-                        # Show user-friendly message
-                        if "libpango" in error_msg or "libcairo" in error_msg:
-                            print("\n💡 To fix on macOS:")
-                            print("   brew install pango cairo gdk-pixbuf libffi")
-                            print("   pip install --upgrade --force-reinstall weasyprint")
-                        return gr.File(visible=False)
-                    except Exception as e:
-                        # Log error but don't crash
-                        import traceback
-                        print(f"❌ PDF export error: {e}")
-                        traceback.print_exc()
-                        return gr.File(visible=False)
-                
                 export_md_btn.click(
                     fn=export_markdown,
                     inputs=[report_display],
@@ -531,10 +534,11 @@ def create_interface():
                     outputs=[export_html_file]
                 )
             
-                export_pdf_btn.click(
-                    fn=export_pdf,
-                    inputs=[report_display],
-                    outputs=[export_pdf_file]
+            with gr.Tab("📚 Sources"):
+                sources_table = gr.Dataframe(
+                    headers=["Title", "URL", "Type"],
+                    label="Sources",
+                    interactive=False,
                 )
             
             # 📊 Analytics tab
@@ -548,7 +552,7 @@ def create_interface():
                 )
                 qa_question = gr.Textbox(
                     label="Your question",
-                    placeholder="e.g., Summarize the report in 4 lines",
+                    placeholder="e.g., Summarize the key risks, or Compare the traditional vs AI-based approaches...",
                     lines=2,
                 )
                 with gr.Row():
@@ -558,7 +562,7 @@ def create_interface():
         # --- Event Handlers ---
         
         # Auto-generate plan when topic changes
-        async def handle_topic_change(topic, num_sources):
+        async def handle_topic_change(topic, num_searches, num_sources):
             """Auto-generate plan when topic is entered."""
             if not topic or not topic.strip():
                 return (
@@ -570,7 +574,7 @@ def create_interface():
                 )
             
             try:
-                queries, thoughts, status, visibility = await generate_plan_callback(topic, num_sources)
+                queries, thoughts, status, visibility = await generate_plan_callback(topic, num_searches, num_sources)
                 queries_df = [[q] for q in queries] if queries else []
                 return (
                     gr.update(visible=True),
@@ -591,13 +595,19 @@ def create_interface():
         # Auto-generate plan when topic or settings change
         topic_input.change(
             fn=handle_topic_change,
-            inputs=[topic_input, num_sources],
+            inputs=[topic_input, num_searches, num_sources],
+            outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
+        )
+        
+        num_searches.change(
+            fn=handle_topic_change,
+            inputs=[topic_input, num_searches, num_sources],
             outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
         )
         
         num_sources.change(
             fn=handle_topic_change,
-            inputs=[topic_input, num_sources],
+            inputs=[topic_input, num_searches, num_sources],
             outputs=[plan_section, query_inputs, plan_thoughts, live_log, plan_state],
         )
         
@@ -634,35 +644,32 @@ def create_interface():
             # Filter out empty queries
             return [q for q in queries if q]
         
-        async def start_research_with_queries(topic, queries_df, num_sources, max_waves, files):
+        async def start_research_with_queries(topic, queries_df, num_searches, num_sources, max_waves, files, show_outline):
             """Extract queries and start research."""
             queries = extract_queries_from_df(queries_df)
             
             # Empty queries guard - show friendly error
             if not queries:
-                yield ("", "❌ Please provide at least one search query. All queries are empty.", None)
+                yield ("", [], "❌ Please provide at least one search query. All queries are empty.", gr.update(visible=False), None)
                 return
             
-            # Use all provided queries from the table
-            status_msg = ""
-            placeholder_report = (
-                "### 🔄 Research in progress...\n\n"
-                "Live updates are streaming in the Log panel. Your final report will appear here once the research completes."
-            )
+            # Cap queries to num_searches if user provided more
+            original_count = len(queries)
+            if len(queries) > num_searches:
+                queries = queries[:num_searches]
+                status_msg = f"ℹ️ Using first {num_searches} of {original_count} edited queries.\n\n"
+            else:
+                status_msg = ""
             
-            status_msg += "🚀 Starting research with your approved queries..."
-            yield (placeholder_report, status_msg, None)
-            status_msg = ""
-            
-            # Start research with queries from the table
-            first_yield = False
-            async for result in run_research_stream(topic, queries, num_sources, max_waves, files or []):
+            # Start research with (possibly capped) queries
+            first_yield = True
+            async for result in run_research_stream(topic, queries, num_sources, max_waves, files or [], show_outline):
                 # Prepend status message to first status update if queries were capped
                 if first_yield and status_msg:
-                    report_md, status, analytics = result
+                    report_md, sources_data, status, outline_update, analytics = result
                     if status:
                         status = status_msg + status
-                    yield (report_md, status, analytics)
+                    yield (report_md, sources_data, status, outline_update, analytics)
                     first_yield = False
                 else:
                     yield result
@@ -670,23 +677,23 @@ def create_interface():
         
         approve_btn.click(
             fn=start_research_with_queries,
-            inputs=[topic_input, query_inputs, num_sources, max_waves, file_upload],
-            outputs=[report_display, live_log, analytics_state]
+            inputs=[topic_input, query_inputs, num_searches, num_sources, max_waves, file_upload, show_outline],
+            outputs=[report_display, sources_table, live_log, outline_md, analytics_state]
         )
         
         # --- Q&A Handlers ---
         
-        # Ask button → use current report + chat history (sources extracted from report)
+        # Ask button → use current report + sources + chat history
         qa_ask_btn.click(
             fn=qa_answer_callback,
-            inputs=[qa_question, report_display, qa_chat],
+            inputs=[qa_question, report_display, sources_table, qa_chat],
             outputs=[qa_chat, qa_question],
         )
         
         # Allow Enter key to submit Q&A question
         qa_question.submit(
             fn=qa_answer_callback,
-            inputs=[qa_question, report_display, qa_chat],
+            inputs=[qa_question, report_display, sources_table, qa_chat],
             outputs=[qa_chat, qa_question],
         )
         
@@ -709,19 +716,17 @@ def create_interface():
                 **Core Capabilities:**
                 - ✅ Multi-agent architecture (QueryGenerator, SearchAgent, WriterAgent, FollowUpDecisionAgent, FileSummarizerAgent, ReportQAAgent)
                 - ✅ Multi-wave research with intelligent follow-up queries (up to 3 waves)
-                - ✅ Dynamic query generation: Planner automatically determines optimal query count based on topic complexity
-                - ✅ User-guided query planning with review and editing (fully editable query table)
+                - ✅ User-guided query planning with review and editing
                 - ✅ File upload support (PDF, DOCX, TXT) with semantic chunking and parallel processing
                 - ✅ Parallel search execution with concurrent API calls (50x speedup)
                 - ✅ Two-level caching system (L1: in-memory, L2: SQLite persistent) with 24h TTL and LRU management
                 - ✅ Time-sensitive query detection (auto-bypasses cache for "latest", "today", "breaking")
-                - ✅ Intelligent source limits: AI recommends optimal source count based on query complexity
                 
                 **Report Generation:**
                 - ✅ Structured outputs with Pydantic schemas and validation
                 - ✅ Cross-source synthesis with multi-citation support ([1][2][3])
-                - ✅ Comprehensive long-form reports with adaptive section structures and nested subsections
-                - ✅ Plain clickable citations (no background highlighting) for clean readability
+                - ✅ Comprehensive 2000-5000 word reports with adaptive section structures
+                - ✅ Styled citation boxes with clickable links
                 - ✅ Source deduplication and intelligent filtering (top-K by content richness)
                 - ✅ Subtopic extraction and theme analysis for better organization
                 - ✅ Output quality validation with automatic retry on failure
@@ -729,43 +734,37 @@ def create_interface():
                 **UI & Analytics:**
                 - ✅ Real-time streaming updates with Live Log
                 - ✅ Analytics dashboard with Plotly visualizations (sources, citations, efficiency metrics)
-                - ✅ Workflow graph visualization showing agent architecture and tool interactions
                 - ✅ Interactive Q&A about generated reports (ReportQAAgent)
-                - ✅ Export to Markdown, HTML, and PDF with full citations
+                - ✅ Export to Markdown and HTML with full citations
                 - ✅ Query-level summaries for better context integration
-                - ✅ Collapsible References section for cleaner report display
                 
                 **Technical Features:**
-                - ✅ Uses GPT-4o-mini for all tasks to optimize cost while maintaining quality
-                - ✅ Token estimation and prompt optimization (5000 char query-level summary limit)
+                - ✅ Token estimation and prompt optimization (3000 char summary limit)
                 - ✅ URL normalization and citation management
                 - ✅ Database migration logic for cache schema evolution
                 - ✅ Source credibility scoring based on domain analysis
                 - ✅ Safe async execution with comprehensive error handling
-                - ✅ Follow-up query deduplication to prevent redundant research waves
                 
                 ### How It Works
                 
-                1. **Planning**: QueryGeneratorAgent analyzes topic complexity and creates diverse search queries (typically 3-12 queries) covering multiple research angles (background, stats, trends, case studies, risks, etc.)
-                2. **Query Review** (optional): Review and edit AI-generated queries in the interactive table before execution
+                1. **Planning**: QueryGeneratorAgent creates diverse search queries covering multiple research angles (background, stats, trends, case studies, risks, etc.)
+                2. **Query Review** (optional): Review and edit AI-generated queries before execution
                 3. **File Processing** (optional): Processes uploaded documents using LLM-based semantic chunking and parallel summarization
-                4. **Search Waves**: Searches the web in parallel for relevant sources with detailed query-level summaries
-                5. **Follow-Up Decision**: FollowUpDecisionAgent analyzes findings, identifies gaps, and decides if additional research waves are needed (with deduplication against previous queries)
-                6. **Source Processing**: Deduplicates sources, filters to recommended count (or user-specified limit), and normalizes URLs
-                7. **Writing**: WriterAgent synthesizes sources into comprehensive long-form research reports with nested subsections and inline citations
+                4. **Search Waves**: Searches the web in parallel for relevant sources with query-level summaries
+                5. **Follow-Up Decision**: FollowUpDecisionAgent analyzes findings and decides if additional research waves are needed
+                6. **Source Processing**: Deduplicates sources, filters to top-K by content richness, and normalizes URLs
+                7. **Writing**: WriterAgent synthesizes sources into structured 2000-5000 word research reports with inline citations
                 8. **Validation**: Validates output quality and retries with simplified prompt if needed
-                9. **Rendering**: Converts to markdown with plain clickable citations and generates collapsible References section
+                9. **Rendering**: Converts to markdown with styled citations and generates References section
                 
                 ### Tips
                 
                 - Use specific topics for better results (e.g., "AI in Healthcare: diagnostics, treatment, and ethics")
-                - The system uses GPT-4o-mini for all tasks to optimize cost while maintaining quality
+                - The system uses GPT-4o for all agent operations with advanced prompt engineering
                 - Upload relevant documents to enhance your research (processed in parallel)
-                - Review and edit queries in the planning phase for better control (queries are fully editable)
-                - The planner automatically determines the optimal number of queries based on topic complexity
-                - Check the Analytics tab after research for detailed metrics, visualizations, and workflow graph
+                - Review and edit queries in the planning phase for better control
+                - Check the Analytics tab after research for detailed metrics and visualizations
                 - Use the Q&A tab to explore your generated report interactively
-                - Reports support nested subsections for hierarchical organization of complex topics
                 
                 ### Caching
                 
@@ -778,7 +777,7 @@ def create_interface():
                 
                 Make sure your `OPENAI_API_KEY` is set in your environment or `.env` file.
                 """
-                )
+            )
     
     return demo
 

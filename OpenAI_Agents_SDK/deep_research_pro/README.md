@@ -4,7 +4,7 @@ A multi-agent research assistant built on the OpenAI Agents SDK. Given a questio
 
 ![Deep Research Pro demo](demo/deep_research_pro_demo.gif)
 
-[Full demo video (MP4, 38 s)](demo/deep_research_pro_demo.mp4)
+[Download the full-resolution demo (MP4, 38 s)](demo/deep_research_pro_demo.mp4?raw=true)
 
 ## How it works
 

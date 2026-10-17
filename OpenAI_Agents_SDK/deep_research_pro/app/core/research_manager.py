@@ -154,17 +154,19 @@ class ResearchManager:
                 self.source_index[src.url] = src
     
     def _deduplicate_sources(self, sources: List[SourceDoc]) -> List[SourceDoc]:
-        """Remove duplicate sources based on content similarity."""
+        """Remove duplicate sources (same URL or near-identical content)."""
+        seen_urls = set()
         seen_content = set()
         filtered = []
         for src in sources:
             content = (src.content or src.snippet or "").strip()
-            if not content:
+            if not content or src.url in seen_urls:
                 continue
             # Use a hash of first 500 chars to detect near-duplicates
             content_key = content[:500].lower()
             if content_key not in seen_content:
                 seen_content.add(content_key)
+                seen_urls.add(src.url)
                 filtered.append(src)
         return filtered
     

@@ -129,13 +129,18 @@ async def test_writer_agent_handles_empty_sources(mock_openai_client):
     agent = WriterAgent(model="gpt-4o", openai_client=mock_openai_client)
     
     mock_output = {
-        "outline": ["Introduction"],
+        "outline": ["Introduction", "Open Questions"],
         "sections": [
             {
                 "title": "Introduction",
                 "summary": "This topic requires further research as no sources were provided.",
                 "citations": [],
-            }
+            },
+            {
+                "title": "Open Questions",
+                "summary": "Key questions remain unanswered without supporting sources.",
+                "citations": [],
+            },
         ],
         "notes": ["No sources available for this research topic"],
     }

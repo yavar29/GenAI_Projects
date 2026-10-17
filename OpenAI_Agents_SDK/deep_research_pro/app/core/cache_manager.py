@@ -18,7 +18,7 @@ from app.core.settings import DATA_DIR
 CACHE_DB_PATH = DATA_DIR / "search_cache_v1.sqlite"
 CACHE_TTL_SECONDS = 24 * 3600  # 24 hours default
 CACHE_MAX_ROWS = 1000
-CACHE_VERSION_SALT = "v1.0"  # Increment to invalidate all cache
+CACHE_VERSION_SALT = "v1.2"  # Increment to invalidate all cache (v1.2: results carry verified, complete URLs)
 CACHE_CLEANUP_INTERVAL = 3600  # Cleanup every hour (if called)
 CACHE_LAST_ACCESS_THRESHOLD = 7 * 24 * 3600  # Prune entries not accessed in 7 days
 

@@ -52,7 +52,7 @@ from app.core.settings import (
 )
 from app.core.tracing import TRACE_DASHBOARD
 from app.core.openai_client import make_async_client
-from app.tools.hosted_tools import get_search_provider_async
+from app.tools.hosted_tools import get_search_provider_async, is_valid_source_url
 from app.core.render import render_markdown
 from app.schemas.analytics import EfficiencyMetrics, WaveStat
 from app.core.analytics_builder import build_analytics_payload
@@ -407,6 +407,11 @@ class ResearchManager:
         self, source_items: List[Tuple[SourceItem, Dict]]
     ) -> List[SourceDoc]:
         """Helper: Summarize a list of source items in parallel and return SourceDoc objects."""
+        # Skip results without a real link (e.g. placeholder URLs in older cache entries)
+        source_items = [
+            (item, raw) for item, raw in source_items
+            if is_valid_source_url(self._normalize_url(item.url))
+        ]
         if not source_items:
             return []
         

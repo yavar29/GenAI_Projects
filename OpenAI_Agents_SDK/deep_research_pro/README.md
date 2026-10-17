@@ -4,6 +4,8 @@ A multi-agent research assistant built on the OpenAI Agents SDK. Given a questio
 
 https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0
 
+[Watch the full-resolution demo (1080p, 38 s)](https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0)
+
 ## How it works
 
 1. **Plan.** A query-generation agent turns the question into 3–10 search queries. You can edit, add or remove queries before the search starts.

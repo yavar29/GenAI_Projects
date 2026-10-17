@@ -63,40 +63,7 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
         if source_index:
             # First, normalize adjacent citations [4][5] to [4] [5] for proper spacing
             summary_text = re.sub(r'\]\[', '] [', summary_text)
-            
-            # Also handle cases where citations might appear as bare numbers (6 7) and convert to [6] [7]
-            # Only wrap numbers that are valid citation IDs and appear in citation-like contexts
-            citation_ids = set(id_to_source.keys())
-            max_citation_id = max(citation_ids) if citation_ids else 0
-            
-            def wrap_bare_citation(match):
-                num_str = match.group(0)
-                try:
-                    num = int(num_str)
-                    # Only process if it's a valid citation ID and reasonably small (citations are usually < 50)
-                    if num in citation_ids and num <= max(50, max_citation_id):
-                        # Check if it's already in brackets (avoid double-wrapping)
-                        start = match.start()
-                        end = match.end()
-                        if start > 0 and end < len(summary_text):
-                            # Check if already wrapped in brackets
-                            if summary_text[start-1] == '[' and summary_text[end] == ']':
-                                return num_str  # Already wrapped
-                            # Check if it's part of a larger number or word
-                            if start > 0 and summary_text[start-1].isdigit():
-                                return num_str  # Part of larger number
-                            if end < len(summary_text) and summary_text[end].isdigit():
-                                return num_str  # Part of larger number
-                        return f"[{num_str}]"
-                except (ValueError, TypeError):
-                    pass
-                return num_str
-            
-            # Pattern to match standalone numbers (1-3 digits) that could be citations
-            # Match numbers that are: at word boundaries, followed by space, punctuation, or end of string
-            # But not followed by another digit (to avoid matching parts of larger numbers)
-            summary_text = re.sub(r'\b(\d{1,3})\b(?=\s|[,.;:!?]|$)', wrap_bare_citation, summary_text)
-            
+
             # Find all citation patterns like [1], [2], [10] and convert to styled HTML boxes
             def replace_citation(match):
                 citation_id_str = match.group(1)
@@ -110,7 +77,9 @@ def render_markdown(report, source_index: Optional[Dict[int, any]] = None) -> st
                         url = url.strip('<>').strip()
                         
                         # Fix malformed URLs (missing protocol or domain)
-                        if url and not url.startswith(('http://', 'https://', '#')):
+                        if not url:
+                            url = f"#ref-{citation_id}"
+                        elif not url.startswith(('http://', 'https://', '#')):
                             if url.startswith('/'):
                                 # Relative URL - link to reference section
                                 url = f"#ref-{citation_id}"

@@ -889,6 +889,7 @@ def run_research_sync(
                         if new_lines:
                             new_text = '\n'.join(new_lines)
                             log_text_inner += new_text + "\n"
+                            status.markdown("  \n".join(new_lines))
                     
                     status.update(label="Research in progress...", state="running")
                     st.session_state.live_log = log_text_inner

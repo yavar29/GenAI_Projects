@@ -12,7 +12,9 @@ import os
 import asyncio
 import pandas as pd
 import re
+from html import unescape
 from typing import Optional, List, Tuple
+from xml.sax.saxutils import escape
 import streamlit.components.v1 as components
 
 from app.core.settings import (
@@ -689,6 +691,26 @@ def _sources_table_to_text(sources_table) -> str:
         lines.append(f"[{i}] ({source_type}) {title} | {url}")
     return "\n".join(lines) if lines else "No sources were provided."
 
+def _markdown_line_to_pdf_markup(text: str) -> str:
+    """Convert one line of report markdown (with inline HTML citations) to ReportLab paragraph markup."""
+    links = []
+
+    def keep_link(href: str, label: str) -> str:
+        label = escape(unescape(re.sub(r"<[^>]+>", "", label)))
+        if href.startswith(("http://", "https://")):
+            safe_href = escape(href, {'"': "&quot;"})
+            links.append(f'<a href="{safe_href}" color="#1a5fb4">{label}</a>')
+        else:
+            links.append(label)
+        return f"\x00{len(links) - 1}\x00"
+
+    text = re.sub(r'<a\s[^>]*?href="([^"]*)"[^>]*>(.*?)</a>', lambda m: keep_link(m.group(1), m.group(2)), text)
+    text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", lambda m: keep_link(m.group(2), m.group(1)), text)
+    text = escape(unescape(re.sub(r"<[^>]+>", "", text)))
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"(?<![\*\w])\*(?!\s)(.+?)(?<!\s)\*(?![\*\w])", r"<i>\1</i>", text)
+    return re.sub(r"\x00(\d+)\x00", lambda m: links[int(m.group(1))], text)
+
 def generate_pdf_report(markdown_content: str, topic: str) -> bytes:
     """Generate PDF from markdown content with custom styling."""
     try:
@@ -698,8 +720,7 @@ def generate_pdf_report(markdown_content: str, topic: str) -> bytes:
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
         from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
         from io import BytesIO
-        import markdown2
-        
+
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter,
                                 rightMargin=72, leftMargin=72,
@@ -719,26 +740,28 @@ def generate_pdf_report(markdown_content: str, topic: str) -> bytes:
             fontName='Helvetica-Bold'
         )
         
-        # Add title
-        Story.append(Paragraph(f"Research Report: {topic}", title_style))
-        Story.append(Spacer(1, 12))
-        
-        # Convert markdown to HTML then to PDF
-        html_content = markdown2.markdown(markdown_content)
-        
-        # Split into paragraphs and add to story
+        # Add title (the report's own H1 is used when present)
+        if not markdown_content.lstrip().startswith('# '):
+            Story.append(Paragraph(f"Research Report: {escape(topic)}", title_style))
+            Story.append(Spacer(1, 12))
+
+        # Convert each markdown line to a styled paragraph
         for line in markdown_content.split('\n'):
             if line.strip():
                 if line.startswith('#'):
                     # Header
                     level = len(line) - len(line.lstrip('#'))
-                    text = line.lstrip('#').strip()
-                    style = styles[f'Heading{min(level, 3)}']
+                    text = _markdown_line_to_pdf_markup(line.lstrip('#').strip())
+                    style = title_style if level == 1 else styles[f'Heading{min(level, 3)}']
                     Story.append(Paragraph(text, style))
                     Story.append(Spacer(1, 12))
+                elif line.lstrip().startswith(('- ', '* ')):
+                    # Bullet point
+                    text = _markdown_line_to_pdf_markup(line.lstrip()[2:])
+                    Story.append(Paragraph(text, styles['BodyText'], bulletText='•'))
                 else:
                     # Regular paragraph
-                    Story.append(Paragraph(line, styles['BodyText']))
+                    Story.append(Paragraph(_markdown_line_to_pdf_markup(line), styles['BodyText']))
                     Story.append(Spacer(1, 6))
         
         doc.build(Story)

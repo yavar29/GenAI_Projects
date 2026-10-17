@@ -2,9 +2,9 @@
 
 A multi-agent research assistant built on the OpenAI Agents SDK. Given a question, it plans a set of web searches, lets you review them, runs them in parallel, decides whether a follow-up round is needed, and writes a structured report in which every claim is cited to a numbered source.
 
-https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0
+https://github.com/user-attachments/assets/e4bb495b-50b2-4314-aea6-31ef69b3d5ec
 
-[Watch the full-resolution demo](https://github.com/user-attachments/assets/d9131a89-1591-4a9e-bf58-3f96dc60e3c0) (1080p, 38 s)
+[Watch the full-resolution demo](https://github.com/user-attachments/assets/e4bb495b-50b2-4314-aea6-31ef69b3d5ec) (1080p, 38 s)
 
 ## How it works
 
